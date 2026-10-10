@@ -1,0 +1,60 @@
+<!-- VIEW: HISTÓRICO DE PREÇOS (PADRÃO D·ROSA) -->
+<div class="historico-topbar">
+  <div class="historico-topbar-left">
+    <div class="prod-select-wrap">
+      <select id="hist-product-select" onchange="handleHistProductChange(this.value)">
+        <!-- Preenchido via historico.js -->
+      </select>
+    </div>
+  </div>
+
+  <div class="period-toggle-group">
+    <button class="period-btn" onclick="setHistoryPeriod(7, this)">7 dias</button>
+    <button class="period-btn active" onclick="setHistoryPeriod(30, this)">30 dias</button>
+    <button class="period-btn" onclick="setHistoryPeriod(90, this)">90 dias</button>
+  </div>
+</div>
+
+<!-- 3 METRIC CARDS -->
+<div class="hist-metrics-grid">
+  <div class="stat-card green-accent">
+    <div class="stat-header">Menor preço do período</div>
+    <div class="stat-value" id="hist-stat-lowest">R$ —</div>
+    <div class="stat-desc" id="hist-stat-lowest-sub">hoje, na loja</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-header">Variação em 30 dias</div>
+    <div class="stat-value" id="hist-stat-variation">—</div>
+    <div class="stat-desc" id="hist-stat-variation-sub">comparado ao início do período</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-header" id="hist-stat-target-header">Alvo de R$ —</div>
+    <div class="stat-value" id="hist-stat-target-status">Não atingido</div>
+    <div class="stat-desc" id="hist-stat-target-sub">Faltam R$ —</div>
+  </div>
+</div>
+
+<!-- GRÁFICO PRINCIPAL + FEED DE ÚLTIMAS MUDANÇAS -->
+<div class="historico-main-layout">
+  <!-- GRÁFICO POR LOJA -->
+  <div class="content-card hist-chart-card">
+    <div class="card-header-bar">
+      <h3>Preço por loja</h3>
+    </div>
+    <div class="chart-canvas-wrap">
+      <canvas id="hist-main-chart"></canvas>
+    </div>
+  </div>
+
+  <!-- COLUNA LATERAL: ÚLTIMAS MUDANÇAS -->
+  <div class="content-card hist-feed-card">
+    <div class="card-header-bar">
+      <h3>Últimas mudanças</h3>
+      <p>em todos os produtos</p>
+    </div>
+
+    <div class="changes-feed-list" id="hist-changes-feed">
+      <!-- Preenchido via historico.js -->
+    </div>
+  </div>
+</div>

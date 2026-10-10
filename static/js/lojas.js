@@ -1,0 +1,93 @@
+// ==========================================
+// MÓDULO LOJAS (static/js/lojas.js)
+// ==========================================
+
+function renderLojasView() {
+  const cardsRoot = document.getElementById('lojas-summary-cards');
+  const tbody = document.getElementById('lojas-tbody');
+  if (!cardsRoot || !tbody) return;
+
+  // Agrupa listings por loja
+  const storesMap = {};
+  const allListings = [];
+
+  productsData.forEach(p => {
+    p.listings.forEach(l => {
+      const storeName = l.store || 'Outra';
+      if (!storesMap[storeName]) {
+        storesMap[storeName] = { count: 0, items: [] };
+      }
+      storesMap[storeName].count++;
+      storesMap[storeName].items.push({ ...l, product_name: p.name });
+      allListings.push({ ...l, product_name: p.name });
+    });
+  });
+
+  // Render cards superiores
+  const storeNames = Object.keys(storesMap);
+  if (!storeNames.length) {
+    cardsRoot.innerHTML = `<div class="stat-card"><div class="stat-desc">Nenhuma loja cadastrada ainda.</div></div>`;
+  } else {
+    cardsRoot.innerHTML = storeNames.map(s => {
+      const cls = getStoreClass(s);
+      const count = storesMap[s].count;
+      return `
+        <div class="stat-card">
+          <div class="stat-header">
+            <span class="store-pill ${cls}" style="margin-left: -4px">
+              <span class="store-avatar">${s[0].toUpperCase()}</span>
+              ${s}
+            </span>
+          </div>
+          <div class="stat-value">${count}</div>
+          <div class="stat-desc">${count === 1 ? 'produto monitorado' : 'produtos monitorados'}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Render tabela
+  if (!allListings.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:var(--text-muted)">Nenhum link de loja cadastrado ainda.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = allListings.map(l => {
+    const cls = getStoreClass(l.store);
+    const storeInit = l.store ? l.store[0].toUpperCase() : '?';
+    const effPrice = l.final_price || l.last_price;
+
+    return `
+      <tr>
+        <td>
+          <span class="store-pill ${cls}">
+            <span class="store-avatar">${storeInit}</span>
+            ${l.store}
+          </span>
+        </td>
+        <td>
+          <div class="prod-cell">
+            <div class="prod-icon" style="width:28px; height:28px; font-size:12px"><i class="fa-solid fa-laptop"></i></div>
+            <span>${l.product_name}</span>
+          </div>
+        </td>
+        <td><b>${brl(effPrice)}</b></td>
+        <td>
+          <span style="font-size:12px; color:var(--text-muted)">
+            <i class="fa-solid fa-code" style="margin-right:4px"></i>
+            ${l.use_browser ? 'Playwright (Navegador)' : 'HTTP Rápido'}
+          </span>
+        </td>
+        <td style="color:var(--text-muted); font-size:12px">
+          ${l.checked_at ? l.checked_at.replace(/-/g, '/') + ' UTC' : 'Pendente'}
+        </td>
+        <td>
+          <a href="${l.url}" target="_blank" rel="noopener" class="btn-outline" style="padding:4px 10px; font-size:12px; text-decoration:none">
+            Visitar <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:10px; margin-left:4px"></i>
+          </a>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+

@@ -1,0 +1,71 @@
+<!-- VIEW: PAINEL -->
+<!-- STATS CARDS -->
+<div class="stats-grid">
+  <div class="stat-card green-accent">
+    <div class="stat-header">Alvos atingidos</div>
+    <div class="stat-value" id="stat-hits">0 de 0</div>
+    <div class="stat-desc" id="stat-hits-desc">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-header">Produtos monitorados</div>
+    <div class="stat-value" id="stat-prods">0</div>
+    <div class="stat-desc">itens em acompanhamento</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-header">Lojas monitoradas</div>
+    <div class="stat-value" id="stat-stores-count">0</div>
+    <div class="stat-desc" id="stat-stores-names">Nenhuma loja cadastrada</div>
+  </div>
+</div>
+
+<!-- BARRA DE PESQUISA E FILTROS DE CATEGORIA -->
+<div class="search-filter-bar">
+  <div class="category-filter-chips" id="painel-category-chips">
+    <button class="category-chip active" data-cat="todos" onclick="setPainelCategory('todos')">
+      <i class="fa-solid fa-layer-group"></i> Todos
+    </button>
+    <button class="category-chip" data-cat="Notebook" onclick="setPainelCategory('Notebook')">
+      <i class="fa-solid fa-laptop"></i> Notebooks
+    </button>
+    <button class="category-chip" data-cat="Monitor" onclick="setPainelCategory('Monitor')">
+      <i class="fa-solid fa-desktop"></i> Monitores
+    </button>
+    <button class="category-chip" data-cat="Periférico" onclick="setPainelCategory('Periférico')">
+      <i class="fa-solid fa-keyboard"></i> Periféricos
+    </button>
+    <button class="category-chip" data-cat="Hardware" onclick="setPainelCategory('Hardware')">
+      <i class="fa-solid fa-microchip"></i> Hardware
+    </button>
+  </div>
+  <div class="search-input-wrap">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <input type="text" id="painel-search-input" placeholder="Pesquisar por modelo..." oninput="handlePainelSearch(this.value)">
+  </div>
+</div>
+
+<!-- DASHBOARD TABLE -->
+<div class="content-card">
+  <div class="card-header-bar">
+    <h3>Melhor preço por produto</h3>
+    <p>Ordenado pelos mais perto do alvo.</p>
+  </div>
+
+  <div class="table-responsive">
+    <table class="dashboard-table">
+      <thead>
+        <tr>
+          <th>Produto</th>
+          <th>Melhor Loja</th>
+          <th>Melhor Preço</th>
+          <th>Alvo</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="dashboard-tbody">
+        <!-- Renderizado dinamicamente via painel.js -->
+      </tbody>
+    </table>
+  </div>
+</div>
+

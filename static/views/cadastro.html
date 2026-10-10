@@ -1,0 +1,87 @@
+<!-- VIEW: CADASTRO (PRODUTOS & LINKS) -->
+<div class="cadastro-grid">
+  <!-- CARD 1: CADASTRAR NOVO PRODUTO -->
+  <div class="form-card">
+    <div class="form-card-header">
+      <div class="form-card-icon">
+        <i class="fa-solid fa-boxes-stacked"></i>
+      </div>
+      <div class="form-card-title">
+        <h3>Cadastrar Novo Produto</h3>
+        <p>Adicione um modelo e categoria para monitoramento.</p>
+      </div>
+    </div>
+
+    <form id="f-product" onsubmit="handleCreateProduct(event)">
+      <div class="form-group">
+        <label>Nome do Produto / Modelo</label>
+        <input name="name" placeholder="Ex.: Lenovo IdeaPad 3, Monitor Dell 27..." required>
+      </div>
+      <div class="form-group">
+        <label>Tipo / Categoria do Produto</label>
+        <select name="category" required>
+          <option value="Notebook" selected>Notebook</option>
+          <option value="Monitor">Monitor</option>
+          <option value="Periférico">Periférico</option>
+          <option value="Hardware">Hardware</option>
+          <option value="Smartphone">Smartphone</option>
+          <option value="Outro">Outro</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Preço Alvo Desejado (R$)</label>
+        <input name="target_price" type="number" step="0.01" placeholder="Ex.: 3100.00">
+      </div>
+      <div style="margin-top: 24px">
+        <button type="submit" class="btn-primary" style="width: 100%; justify-content: center">
+          <i class="fa-solid fa-plus"></i>
+          <span>Cadastrar Produto</span>
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- CARD 2: ADICIONAR LINK DE LOJA -->
+  <div class="form-card">
+    <div class="form-card-header">
+      <div class="form-card-icon">
+        <i class="fa-solid fa-link"></i>
+      </div>
+      <div class="form-card-title">
+        <h3>Adicionar Link de Loja</h3>
+        <p>Vincule uma URL de compra a um produto já cadastrado.</p>
+      </div>
+    </div>
+
+    <form id="f-listing" onsubmit="handleCreateListing(event)">
+      <div class="form-group">
+        <label>Produto Selecionado</label>
+        <select name="product_id" id="select-cadastro-product" required>
+          <option value="">Carregando produtos...</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Nome da Loja</label>
+        <input name="store" placeholder="Ex.: Amazon, Kabum, Lenovo, Magalu..." required>
+      </div>
+      <div class="form-group">
+        <label>URL Completa do Produto</label>
+        <input name="url" type="url" placeholder="https://..." required>
+      </div>
+      <div class="form-group">
+        <label>Seletor CSS (Opcional - Plano B)</label>
+        <input name="css_selector" placeholder="Ex.: span.preco, .finalPrice">
+      </div>
+      <label class="checkbox-label">
+        <input name="use_browser" type="checkbox">
+        <span>Usar navegador Playwright (site com JS obrigatório)</span>
+      </label>
+      <div style="margin-top: 24px">
+        <button type="submit" class="btn-primary" style="width: 100%; justify-content: center">
+          <i class="fa-solid fa-plus"></i>
+          <span>Adicionar Link ao Rastreador</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

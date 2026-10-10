@@ -1,0 +1,238 @@
+<!-- VIEW: ALERTAS DE PREÇO (PADRÃO D·ROSA) -->
+<div class="alertas-layout">
+  <!-- COLUNA PRINCIPAL: REGRAS -->
+  <div class="content-card">
+    <div class="card-header-flex">
+      <div>
+        <h3>Regras</h3>
+        <span class="muted-badge" id="alertas-rules-count">0 regras · 0 ativas</span>
+      </div>
+      <button class="btn-primary" onclick="openNewRuleModal()">
+        <i class="fa-solid fa-plus"></i>
+        <span>Nova regra</span>
+      </button>
+    </div>
+
+    <div class="rules-list" id="rules-list-container">
+      <!-- Renderizado via alertas.js -->
+    </div>
+  </div>
+
+  <!-- COLUNA LATERAL: DISPARADOS RECENTEMENTE & CANAIS DE AVISO -->
+  <div class="alertas-sidebar-col">
+    <!-- CARD: DISPARADOS RECENTEMENTE -->
+    <div class="content-card">
+      <div class="card-header-bar">
+        <h3>Disparados recentemente</h3>
+      </div>
+      <div class="disparos-list" id="disparos-list-container">
+        <!-- Renderizado via alertas.js -->
+      </div>
+    </div>
+
+    <!-- CARD: CANAIS DE AVISO -->
+    <div class="content-card" style="margin-top: 20px">
+      <div class="card-header-bar">
+        <h3>Canais de aviso</h3>
+      </div>
+
+      <div class="canais-list">
+        <div class="canal-row">
+          <span>E-mail</span>
+          <span class="badge-conectado">Conectado</span>
+        </div>
+        <div class="canal-row">
+          <span>Telegram</span>
+          <span class="badge-conectado">Conectado</span>
+        </div>
+      </div>
+
+      <button class="btn-outline" style="width: 100%; justify-content: center; margin-top: 16px" onclick="alert('Configuração de canais disponível em breve')">
+        Adicionar canal
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: NOVA REGRA DE ALERTA -->
+<div class="modal-backdrop hidden" id="modal-new-rule" onclick="if(event.target === this) closeRuleModal()">
+  <div class="modal-content">
+    <div class="modal-header">
+      <div>
+        <h3>Novo alerta</h3>
+        <p>Escolha o produto e quando você quer ser avisado.</p>
+      </div>
+      <button class="modal-close" onclick="closeRuleModal()" title="Fechar">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <form id="f-new-rule" onsubmit="handleSaveNewRule(event)">
+      <div class="form-group">
+        <label>Produto</label>
+        <select name="product_id" id="rule-product-select" onchange="updateRuleProductPreview()" required>
+          <!-- preenchido via JS -->
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Quando avisar</label>
+        <div class="trigger-type-group" id="new-rule-trigger-group">
+          <div class="trigger-card active" onclick="selectNewRuleTrigger('below', this)">
+            <div class="trigger-radio-dot"></div>
+            <span class="trigger-title">Preço abaixo de</span>
+            <span class="trigger-sub">valor em R$</span>
+          </div>
+          <div class="trigger-card" onclick="selectNewRuleTrigger('drop', this)">
+            <div class="trigger-radio-dot"></div>
+            <span class="trigger-title">Queda de</span>
+            <span class="trigger-sub">% em 24 horas</span>
+          </div>
+          <div class="trigger-card" onclick="selectNewRuleTrigger('target', this)">
+            <div class="trigger-radio-dot"></div>
+            <span class="trigger-title">Atingir o alvo</span>
+            <span class="trigger-sub">alvo do produto</span>
+          </div>
+        </div>
+        <input type="hidden" name="trigger_type" id="new-rule-trigger-type" value="below">
+      </div>
+
+      <div class="form-group" id="rule-value-group">
+        <label id="rule-value-label">Valor</label>
+        <div class="input-with-prefix">
+          <span class="prefix" id="rule-value-prefix">R$</span>
+          <input name="rule_value" id="rule-value-input" type="number" step="0.01" placeholder="3100.00" required>
+        </div>
+        <div class="field-hint" id="rule-current-price-hint">Menor preço agora: R$ —</div>
+      </div>
+
+      <div class="form-group">
+        <label>Lojas</label>
+        <div class="store-chips-group" id="new-rule-store-chips">
+          <button type="button" class="store-chip-btn active" onclick="toggleStoreChip(this, 'Amazon')">
+            <i class="fa-solid fa-check"></i> Amazon
+          </button>
+          <button type="button" class="store-chip-btn active" onclick="toggleStoreChip(this, 'Kabum')">
+            <i class="fa-solid fa-check"></i> Kabum
+          </button>
+          <button type="button" class="store-chip-btn active" onclick="toggleStoreChip(this, 'Lenovo')">
+            <i class="fa-solid fa-check"></i> Lenovo
+          </button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Avisar por</label>
+        <div style="display:flex; gap:20px; align-items:center; margin-top:4px">
+          <label class="checkbox-label"><input type="checkbox" name="channel_email" checked> E-mail</label>
+          <label class="checkbox-label"><input type="checkbox" name="channel_telegram"> Telegram</label>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-outline" onclick="closeRuleModal()">Cancelar</button>
+        <button type="submit" class="btn-primary">Criar alerta</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- MODAL: EDITAR REGRA -->
+<div class="modal-backdrop hidden" id="modal-edit-rule" onclick="if(event.target === this) closeEditRuleModal()">
+  <div class="modal-content">
+    <div class="modal-header">
+      <div>
+        <h3>Editar regra</h3>
+        <p>Mude quando e como você quer ser avisado.</p>
+      </div>
+      <button class="modal-close" onclick="closeEditRuleModal()" title="Fechar">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <form id="f-edit-rule" onsubmit="handleUpdateRule(event)">
+      <input type="hidden" name="edit_product_id" id="edit-product-id">
+
+      <div class="edit-product-banner">
+        <div class="prod-cell">
+          <div class="prod-icon" id="edit-rule-icon"><i class="fa-solid fa-laptop"></i></div>
+          <div>
+            <h4 id="edit-rule-prod-name">Notebook</h4>
+            <span class="sub" id="edit-rule-prod-sub">Alvo não disparou</span>
+          </div>
+        </div>
+        <div class="edit-rule-toggle-wrap">
+          <span>Regra ativa</span>
+          <label class="switch">
+            <input type="checkbox" id="edit-rule-active-toggle" onchange="handleEditRuleToggle(this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Quando avisar</label>
+        <div class="trigger-type-group" id="edit-rule-trigger-group">
+          <div class="trigger-card active" onclick="selectEditRuleTrigger('below', this)">
+            <div class="trigger-radio-dot"></div>
+            <span class="trigger-title">Preço abaixo de</span>
+            <span class="trigger-sub">valor em R$</span>
+          </div>
+          <div class="trigger-card" onclick="selectEditRuleTrigger('drop', this)">
+            <div class="trigger-radio-dot"></div>
+            <span class="trigger-title">Queda de</span>
+            <span class="trigger-sub">% em 24 horas</span>
+          </div>
+          <div class="trigger-card" onclick="selectEditRuleTrigger('target', this)">
+            <div class="trigger-radio-dot"></div>
+            <span class="trigger-title">Atingir o alvo</span>
+            <span class="trigger-sub">alvo do produto</span>
+          </div>
+        </div>
+        <input type="hidden" name="edit_trigger_type" id="edit-rule-trigger-type" value="below">
+      </div>
+
+      <div class="form-group" id="edit-value-group">
+        <label id="edit-rule-value-label">Valor</label>
+        <div class="input-with-prefix">
+          <span class="prefix" id="edit-rule-value-prefix">R$</span>
+          <input name="edit_target_price" id="edit-rule-price-input" type="number" step="0.01" required>
+        </div>
+        <div class="field-hint" id="edit-rule-current-hint">Menor preço agora: R$ —</div>
+      </div>
+
+      <div class="form-group">
+        <label>Lojas</label>
+        <div class="store-chips-group" id="edit-rule-store-chips">
+          <button type="button" class="store-chip-btn active" onclick="toggleStoreChip(this, 'Amazon')">
+            <i class="fa-solid fa-check"></i> Amazon
+          </button>
+          <button type="button" class="store-chip-btn active" onclick="toggleStoreChip(this, 'Kabum')">
+            <i class="fa-solid fa-check"></i> Kabum
+          </button>
+          <button type="button" class="store-chip-btn active" onclick="toggleStoreChip(this, 'Lenovo')">
+            <i class="fa-solid fa-check"></i> Lenovo
+          </button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Avisar por</label>
+        <div style="display:flex; gap:20px; align-items:center; margin-top:4px">
+          <label class="checkbox-label"><input type="checkbox" checked> E-mail</label>
+          <label class="checkbox-label"><input type="checkbox"> Telegram</label>
+        </div>
+      </div>
+
+      <div class="modal-actions-between">
+        <button type="button" class="btn-text-danger" onclick="handleDeleteRule()">
+          <i class="fa-regular fa-trash-can"></i> Excluir regra
+        </button>
+        <div style="display:flex; gap:10px">
+          <button type="button" class="btn-outline" onclick="closeEditRuleModal()">Cancelar</button>
+          <button type="submit" class="btn-primary">Salvar alterações</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>

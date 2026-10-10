@@ -1,0 +1,40 @@
+<!-- VIEW: PRODUTOS (LAYOUT 2 COLUNAS) -->
+<div class="products-layout">
+  <!-- COLUNA ESQUERDA: LISTA DE PRODUTOS COM BUSCA E FILTROS -->
+  <div class="product-sidebar-list">
+    <!-- BARRA DE BUSCA RÁPIDA -->
+    <div class="search-input-wrap" style="width: 100%; min-width: unset; max-width: unset; margin-bottom: 10px">
+      <i class="fa-solid fa-magnifying-glass"></i>
+      <input type="text" id="produtos-search-input" placeholder="Buscar modelo ou produto..." oninput="handleProdutosSearch(this.value)">
+    </div>
+
+    <!-- CHIPS DE FILTRO POR CATEGORIA -->
+    <div class="category-filter-chips" id="produtos-category-chips" style="margin-bottom: 12px; gap: 6px">
+      <button class="category-chip active" data-cat="todos" onclick="setProdutosCategory('todos')" style="padding: 5px 10px; font-size: 11.5px">
+        Todos
+      </button>
+      <button class="category-chip" data-cat="Notebook" onclick="setProdutosCategory('Notebook')" style="padding: 5px 10px; font-size: 11.5px">
+        Notebooks
+      </button>
+      <button class="category-chip" data-cat="Monitor" onclick="setProdutosCategory('Monitor')" style="padding: 5px 10px; font-size: 11.5px">
+        Monitores
+      </button>
+      <button class="category-chip" data-cat="Periférico" onclick="setProdutosCategory('Periférico')" style="padding: 5px 10px; font-size: 11.5px">
+        Periféricos
+      </button>
+      <button class="category-chip" data-cat="Hardware" onclick="setProdutosCategory('Hardware')" style="padding: 5px 10px; font-size: 11.5px">
+        Hardware
+      </button>
+    </div>
+
+    <div class="list-caption" id="prod-list-count">0 PRODUTOS</div>
+    <div id="product-menu-items">
+      <!-- Renderizado via produtos.js -->
+    </div>
+  </div>
+
+  <!-- COLUNA DIREITA: DETALHE DO PRODUTO SELECIONADO -->
+  <div class="product-detail-card" id="product-detail-area">
+    <!-- Renderizado via produtos.js -->
+  </div>
+</div>

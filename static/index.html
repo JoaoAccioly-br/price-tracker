@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Price Tracker</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💻</text></svg>">
+
+<!-- FONTS & FONT AWESOME ICONS -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkPKZ5QiAj6Ta86w+fsb2TkcmfRyVX3pBnMFcV7oQPJkl9QevSCWr3W6A==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+
+<!-- CHART.JS -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+
+<!-- CENTRALIZED STYLES -->
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside>
+  <div>
+    <div class="brand">
+      <div class="brand-icon">
+        <i class="fa-solid fa-chart-line"></i>
+      </div>
+      <div class="brand-text">
+        <h1>Price</h1>
+        <span>Tracker</span>
+      </div>
+    </div>
+
+    <nav class="nav-menu">
+      <button class="nav-item active" data-route="painel" onclick="router.navigate('painel')">
+        <i class="fa-solid fa-table-cells-large"></i>
+        <span>Painel</span>
+      </button>
+      <button class="nav-item" data-route="produtos" onclick="router.navigate('produtos')">
+        <i class="fa-solid fa-laptop"></i>
+        <span>Produtos</span>
+      </button>
+      <button class="nav-item" data-route="alertas" onclick="router.navigate('alertas')">
+        <i class="fa-solid fa-bell"></i>
+        <span>Alertas de Preço</span>
+      </button>
+      <button class="nav-item" data-route="historico" onclick="router.navigate('historico')">
+        <i class="fa-solid fa-clock-rotate-left"></i>
+        <span>Histórico</span>
+      </button>
+      <button class="nav-item" data-route="cadastro" onclick="router.navigate('cadastro')">
+        <i class="fa-solid fa-circle-plus"></i>
+        <span>Adicionar Produto / Link</span>
+      </button>
+    </nav>
+  </div>
+
+  <div class="sidebar-footer">
+    <div class="lbl">Última leitura</div>
+    <div class="val" id="last-read-val">—</div>
+  </div>
+</aside>
+
+<!-- MAIN CONTENT -->
+<main>
+  <!-- TOP BAR -->
+  <div class="top-header">
+    <div class="title-area">
+      <h2 id="view-title">Painel</h2>
+      <p id="view-subtitle">Os melhores preços encontrados hoje, entre todas as lojas.</p>
+    </div>
+    <div class="top-actions">
+      <button class="btn-outline" onclick="router.navigate('cadastro')">
+        <i class="fa-solid fa-plus"></i>
+        <span>Adicionar produto / link</span>
+      </button>
+      <button class="btn-primary" id="collect-btn">
+        <i class="fa-solid fa-arrows-rotate"></i>
+        <span>Atualizar preços agora</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- CONTAINER DINÂMICO CARREGADO PELO ROTEADOR -->
+  <div id="view-container">
+    <div style="padding: 40px; text-align: center; color: var(--text-muted)">
+      <i class="fa-solid fa-circle-notch fa-spin" style="font-size: 24px; margin-bottom: 12px; display: block"></i>
+      Carregando...
+    </div>
+  </div>
+</main>
+
+<!-- SCRIPTS MODULARES -->
+<script src="/js/router.js"></script>
+<script src="/js/painel.js"></script>
+<script src="/js/produtos.js"></script>
+<script src="/js/cadastro.js"></script>
+<script src="/js/alertas.js"></script>
+<script src="/js/historico.js"></script>
+<script src="/js/lojas.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
