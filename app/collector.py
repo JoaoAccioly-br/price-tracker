@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import random
+import threading
 import time
 
 from .db import get_conn, init_db
@@ -14,8 +15,14 @@ from .scrapers import scrape
 
 log = logging.getLogger("collector")
 
-# Conjunto de filas de ouvintes SSE (navegadores conectados)
-_LISTENERS: set[asyncio.Queue] = set()
+# Filas de ouvintes SSE (navegadores conectados) -> loop asyncio dono da fila.
+# A coleta roda numa thread do threadpool; asyncio.Queue NÃO é thread-safe,
+# então os eventos são entregues via loop.call_soon_threadsafe.
+_LISTENERS: dict[asyncio.Queue, asyncio.AbstractEventLoop] = {}
+_LISTENERS_LOCK = threading.Lock()
+
+# Garante uma única coleta por vez (o check de "running" sozinho tem condição de corrida)
+_COLLECT_LOCK = threading.Lock()
 
 COLLECTOR_STATE = {
     "running": False,
@@ -27,20 +34,32 @@ COLLECTOR_STATE = {
 
 
 def add_listener(queue: asyncio.Queue) -> None:
-    _LISTENERS.add(queue)
+    """Registra uma fila SSE. Deve ser chamada de dentro do event loop."""
+    with _LISTENERS_LOCK:
+        _LISTENERS[queue] = asyncio.get_running_loop()
 
 
 def remove_listener(queue: asyncio.Queue) -> None:
-    _LISTENERS.discard(queue)
+    with _LISTENERS_LOCK:
+        _LISTENERS.pop(queue, None)
+
+
+def _safe_put(queue: asyncio.Queue, event_data: dict) -> None:
+    try:
+        queue.put_nowait(event_data)
+    except asyncio.QueueFull:
+        pass  # cliente lento: descarta o evento em vez de acumular memória
 
 
 def _notify_listeners(event_data: dict) -> None:
-    """Dispara o evento para todas as conexões SSE ativas."""
-    for q in list(_LISTENERS):
+    """Dispara o evento para todas as conexões SSE ativas (seguro entre threads)."""
+    with _LISTENERS_LOCK:
+        items = list(_LISTENERS.items())
+    for q, loop in items:
         try:
-            q.put_nowait(event_data)
-        except Exception:
-            pass
+            loop.call_soon_threadsafe(_safe_put, q, event_data)
+        except RuntimeError:  # loop já encerrado
+            remove_listener(q)
 
 
 def get_status() -> dict:
@@ -48,9 +67,15 @@ def get_status() -> dict:
 
 
 def collect_all(delay: tuple[float, float] = (3.0, 8.0)) -> dict:
-    if COLLECTOR_STATE["running"]:
+    if not _COLLECT_LOCK.acquire(blocking=False):
         return COLLECTOR_STATE["stats"]
+    try:
+        return _collect_all(delay)
+    finally:
+        _COLLECT_LOCK.release()
 
+
+def _collect_all(delay: tuple[float, float]) -> dict:
     COLLECTOR_STATE["running"] = True
     COLLECTOR_STATE["current"] = 0
     COLLECTOR_STATE["total"] = 0
@@ -121,7 +146,7 @@ def collect_all(delay: tuple[float, float] = (3.0, 8.0)) -> dict:
     finally:
         conn.close()
         COLLECTOR_STATE["running"] = False
-        COLLECTOR_STATE["last_run"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        COLLECTOR_STATE["last_run"] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())  # UTC, igual ao banco
         _notify_listeners({
             "event": "done", "total": len(rows), "stats": stats, "last_run": COLLECTOR_STATE["last_run"],
         })

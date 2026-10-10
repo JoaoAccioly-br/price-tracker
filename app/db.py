@@ -1,8 +1,13 @@
 """Banco SQLite: simples, sem servidor, suficiente para uso pessoal."""
+import os
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "tracker.db"
+# Pode ser sobrescrito por variável de ambiente (útil no Docker / testes)
+DB_PATH = Path(
+    os.environ.get("TRACKER_DB_PATH")
+    or Path(__file__).resolve().parent.parent / "data" / "tracker.db"
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS products (
@@ -35,14 +40,17 @@ CREATE TABLE IF NOT EXISTS prices (
     checked_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_prices_listing_time ON prices (listing_id, checked_at);
+CREATE INDEX IF NOT EXISTS idx_listings_product ON listings (product_id, active);
 """
 
 
 def get_conn() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    # timeout: espera até 10s por um lock em vez de falhar com "database is locked"
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")  # seguro com WAL e muito mais rápido que FULL
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 

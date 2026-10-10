@@ -1,0 +1,51 @@
+services:
+  app:
+    # Em produção a imagem vem do GHCR (publicada pelo GitHub Actions).
+    # Localmente, "docker compose up --build" constrói a partir do Dockerfile.
+    image: ${IMAGE:-ghcr.io/joaoaccioly-br/price-tracker:latest}
+    build:
+      context: .
+    container_name: price-tracker
+    restart: unless-stopped
+    # tini como PID 1: repassa sinais e recolhe processos zumbis (ex.: Chromium)
+    init: true
+
+    ports:
+      # Por padrão só escuta em 127.0.0.1 (acesso via reverse proxy / túnel SSH).
+      # ATENÇÃO: portas publicadas pelo Docker IGNORAM o firewall do host (ufw).
+      # Para expor direto na internet use BIND_ADDR=0.0.0.0 no .env
+      # (e defina APP_USERNAME/APP_PASSWORD!).
+      - "${BIND_ADDR:-127.0.0.1}:${PORT:-8000}:8000"
+
+    environment:
+      APP_USERNAME: ${APP_USERNAME:-}
+      APP_PASSWORD: ${APP_PASSWORD:-}
+
+    volumes:
+      # Volume nomeado: já nasce com o dono correto (usuário 'app' da imagem).
+      # Backup: docker compose cp app:/app/data/tracker.db ./backup.db
+      - tracker-data:/app/data
+
+    # ---- hardening ----
+    read_only: true                 # filesystem do container somente leitura
+    tmpfs:
+      - /tmp:size=64m,mode=1777     # única área gravável além do volume
+    security_opt:
+      - no-new-privileges:true      # bloqueia escalada via binários setuid
+    cap_drop:
+      - ALL                         # a app não precisa de nenhuma capability do kernel
+
+    # ---- limites de recursos (evita derrubar o servidor) ----
+    mem_limit: 512m                 # aumente para ~1g se usar Chromium
+    cpus: 1.0
+    pids_limit: 200
+
+    # ---- logs com rotação (o padrão json-file cresce sem limite) ----
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  tracker-data:

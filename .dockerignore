@@ -1,0 +1,12 @@
+# Whitelist: ignora TUDO e libera só o que a imagem precisa.
+# Mais seguro que uma blacklist: um .env, chave SSH ou banco esquecido na
+# pasta nunca vai parar no contexto de build (nem na imagem).
+*
+
+!app/
+!static/
+!requirements.txt
+
+# Mesmo dentro das pastas liberadas, nada de caches/bytecode
+**/__pycache__
+**/*.py[cod]

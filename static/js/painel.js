@@ -137,15 +137,15 @@ function renderPainelTable() {
           <div class="prod-cell">
             <div class="prod-icon"><i class="${iconCls}"></i></div>
             <div>
-              <div style="font-weight:700; color:var(--text-title)">${p.name}</div>
-              <span class="cat-badge" style="font-size:11px; color:var(--text-muted)">${p.category || 'Notebook'}</span>
+              <div style="font-weight:700; color:var(--text-title)">${escapeHtml(p.name)}</div>
+              <span class="cat-badge" style="font-size:11px; color:var(--text-muted)">${escapeHtml(p.category || 'Notebook')}</span>
             </div>
           </div>
         </td>
         <td>
           <span class="store-pill ${storeCls}">
-            <span class="store-avatar">${storeInitial}</span>
-            ${store}
+            <span class="store-avatar">${escapeHtml(storeInitial)}</span>
+            ${escapeHtml(store)}
           </span>
         </td>
         <td><span class="price-highlight">${brl(bestP)}</span></td>

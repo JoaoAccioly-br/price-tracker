@@ -56,8 +56,8 @@ function renderAlertasView() {
             <i class="${iconCls}"></i>
           </div>
           <div class="rule-info">
-            <h4>${p.name}</h4>
-            <p>${descText}</p>
+            <h4>${escapeHtml(p.name)}</h4>
+            <p>${escapeHtml(descText)}</p>
           </div>
         </div>
 
@@ -95,8 +95,8 @@ function renderDisparosRecentemente(prods) {
       <div class="disparo-item">
         <div class="disparo-dot"></div>
         <div class="disparo-content">
-          <h5>${p.name} bateu o alvo</h5>
-          <div class="meta">${brl(p.best_price)} na ${store}</div>
+          <h5>${escapeHtml(p.name)} bateu o alvo</h5>
+          <div class="meta">${brl(p.best_price)} na ${escapeHtml(store)}</div>
           <div class="time">Hoje · Verificado recentemente</div>
         </div>
       </div>
@@ -224,7 +224,7 @@ function openNewRuleModal(defaultPid = null) {
   }
 
   sel.innerHTML = productsData.map(p =>
-    `<option value="${p.id}" ${defaultPid && p.id === defaultPid ? 'selected' : ''}>[${p.category || 'Notebook'}] #${p.id} ${p.name}</option>`
+    `<option value="${escapeHtml(p.id)}" ${defaultPid && p.id === defaultPid ? 'selected' : ''}>[${escapeHtml(p.category || 'Notebook')}] #${escapeHtml(p.id)} ${escapeHtml(p.name)}</option>`
   ).join('');
 
   if (defaultPid) sel.value = defaultPid;

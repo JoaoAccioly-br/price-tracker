@@ -1,4 +1,29 @@
-.venv
-data
-.pytest_cache
-__pycache__
+# Ambiente virtual
+.venv/
+venv/
+
+# Dados locais (banco SQLite com seus produtos/histórico)
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Segredos / configuração local
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# Caches Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editores / SO
+.vscode/
+.idea/
+.DS_Store

@@ -20,7 +20,7 @@ async function renderHistoricoView() {
   }
 
   selectEl.innerHTML = productsData.map(p =>
-    `<option value="${p.id}" ${p.id === histSelectedPid ? 'selected' : ''}>[${p.category || 'Notebook'}] ${p.name}</option>`
+    `<option value="${escapeHtml(p.id)}" ${p.id === histSelectedPid ? 'selected' : ''}>[${escapeHtml(p.category || 'Notebook')}] ${escapeHtml(p.name)}</option>`
   ).join('');
 
   await loadHistoricoData(histSelectedPid);
@@ -232,9 +232,9 @@ async function renderChangesFeed() {
         <div class="change-feed-item">
           <div class="change-icon-circle ${isDrop ? 'green' : 'red'}">${icon}</div>
           <div class="change-feed-text">
-            <h5>${item.product} · ${item.store}</h5>
+            <h5>${escapeHtml(item.product)} · ${escapeHtml(item.store)}</h5>
             <p>${actionText} ${brl(item.prevPrice)} para <b>${brl(item.currPrice)}</b></p>
-            <span class="time">${item.time ? item.time.slice(5, 16).replace('-', '/') : 'recente'} UTC</span>
+            <span class="time">${item.time ? escapeHtml(item.time.slice(5, 16).replace('-', '/')) : 'recente'} UTC</span>
           </div>
         </div>
       `;

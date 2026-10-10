@@ -16,7 +16,7 @@ function populateCadastroSelect() {
   }
 
   sel.innerHTML = productsData.map(p =>
-    `<option value="${p.id}" ${p.id === selectedProductId ? 'selected' : ''}>[${p.category || 'Notebook'}] #${p.id} ${p.name}</option>`
+    `<option value="${escapeHtml(p.id)}" ${p.id === selectedProductId ? 'selected' : ''}>[${escapeHtml(p.category || 'Notebook')}] #${escapeHtml(p.id)} ${escapeHtml(p.name)}</option>`
   ).join('');
 }
 

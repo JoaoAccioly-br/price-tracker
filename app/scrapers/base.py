@@ -5,9 +5,12 @@ Ordem de tentativas para achar o preço numa página:
   2. <meta> de preço (og:price / product:price / itemprop="price")
   3. Seletor CSS cadastrado no listing   -> frágil, último recurso
 """
+import ipaddress
 import json
 import re
+import socket
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -195,12 +198,55 @@ def parse_html(html: str, css_selector: str | None = None) -> PriceResult:
 
 
 # ---------------------------------------------------------------------- fetch
+MAX_HTML_BYTES = 8 * 1024 * 1024  # 8 MB: páginas de produto raramente passam de 2 MB
+
+
+class UnsafeURLError(ValueError):
+    """URL aponta para rede interna / esquema não permitido (proteção contra SSRF)."""
+
+
+def assert_public_url(url: str) -> None:
+    """Garante que a URL é http(s) e que o host resolve só para IPs públicos.
+
+    Sem isso, qualquer pessoa com acesso à API poderia cadastrar
+    http://127.0.0.1:xxxx, http://169.254.169.254 (metadados da cloud) ou IPs
+    da rede interna e usar o coletor para sondar serviços privados (SSRF).
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise UnsafeURLError(f"URL não permitida: {url!r}")
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, parsed.port or None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise UnsafeURLError(f"Host não resolvido: {parsed.hostname}") from exc
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        if not ip.is_global:
+            raise UnsafeURLError(f"Host {parsed.hostname} aponta para IP não público ({ip})")
+
+
+def _check_request(request: httpx.Request) -> None:
+    # chamado pelo httpx a cada requisição, inclusive nos redirects
+    assert_public_url(str(request.url))
+
+
 def fetch_html(url: str, use_browser: bool = False) -> str:
+    assert_public_url(url)
     if use_browser:
         return _fetch_with_browser(url)
-    resp = httpx.get(url, headers=HEADERS, timeout=20, follow_redirects=True)
-    resp.raise_for_status()
-    return resp.text
+    with httpx.Client(
+        headers=HEADERS, timeout=20, follow_redirects=True, max_redirects=5,
+        event_hooks={"request": [_check_request]},
+    ) as client:
+        with client.stream("GET", url) as resp:
+            resp.raise_for_status()
+            chunks, size = [], 0
+            for chunk in resp.iter_bytes():
+                size += len(chunk)
+                if size > MAX_HTML_BYTES:
+                    raise ValueError(f"Resposta maior que {MAX_HTML_BYTES} bytes")
+                chunks.append(chunk)
+            return b"".join(chunks).decode(resp.encoding or "utf-8", errors="replace")
 
 
 def _fetch_with_browser(url: str) -> str:
@@ -209,11 +255,13 @@ def _fetch_with_browser(url: str) -> str:
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page(user_agent=HEADERS["User-Agent"])
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(2000)  # deixa o JS da página rodar
-        html = page.content()
-        browser.close()
+        try:
+            page = browser.new_page(user_agent=HEADERS["User-Agent"])
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(2000)  # deixa o JS da página rodar
+            html = page.content()
+        finally:
+            browser.close()  # evita processos chromium órfãos em caso de erro
     return html
 
 

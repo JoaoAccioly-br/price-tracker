@@ -101,9 +101,9 @@ function renderProdutosView() {
       <div class="product-menu-item ${isActive ? 'active' : ''}" onclick="selectProductInDetail(${p.id})">
         <div class="p-item-title">
           <i class="${iconCls}" style="margin-right:6px; font-size:12px; color:var(--text-muted)"></i>
-          #${p.id} ${p.name}
+          #${escapeHtml(p.id)} ${escapeHtml(p.name)}
         </div>
-        <div class="p-item-sub">Melhor <b>${brl(bestP)}</b> · ${p.best_store || 'loja'}</div>
+        <div class="p-item-sub">Melhor <b>${brl(bestP)}</b> · ${escapeHtml(p.best_store || 'loja')}</div>
         <div>${badge}</div>
       </div>
     `;
@@ -161,8 +161,8 @@ function renderProductDetailCard() {
         <div class="prod-icon"><i class="${iconCls}"></i></div>
         <div>
           <div style="display:flex; align-items:center; gap:8px">
-            <h3>#${p.id} ${p.name}</h3>
-            <span style="font-size:11px; background:#fae9e9; color:var(--accent-red); padding:2px 8px; border-radius:99px; font-weight:700">${p.category || 'Notebook'}</span>
+            <h3>#${escapeHtml(p.id)} ${escapeHtml(p.name)}</h3>
+            <span style="font-size:11px; background:#fae9e9; color:var(--accent-red); padding:2px 8px; border-radius:99px; font-weight:700">${escapeHtml(p.category || 'Notebook')}</span>
           </div>
           <div class="sub">Melhor preço: <b>${brl(bestP)}</b> · alvo ${target ? brl(target) : 'não definido'}</div>
         </div>
@@ -195,15 +195,15 @@ function renderProductDetailCard() {
               <td>
                 <div class="store-cell">
                   <span class="store-pill ${storeCls}">
-                    <span class="store-avatar">${storeInit}</span>
+                    <span class="store-avatar">${escapeHtml(storeInit)}</span>
                   </span>
                   <div class="store-info">
-                    <a href="${l.url}" target="_blank" rel="noopener">
-                      ${l.store} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:11px"></i>
+                    <a href="${safeUrl(l.url)}" target="_blank" rel="noopener noreferrer">
+                      ${escapeHtml(l.store)} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:11px"></i>
                     </a>
                     ${isBest ? `<span class="tag-menor"><i class="fa-solid fa-tag" style="font-size:9px"></i> Menor preço</span>` : ''}
-                    ${l.coupon_code ? `<span class="coupon-chip"><i class="fa-solid fa-ticket" style="font-size:9px"></i> ${l.coupon_code}</span>` : ''}
-                    <div class="meta">${l.checked_at ? 'lido em ' + l.checked_at.replace(/-/g, '/') + ' UTC' : 'ainda não coletado'}</div>
+                    ${l.coupon_code ? `<span class="coupon-chip"><i class="fa-solid fa-ticket" style="font-size:9px"></i> ${escapeHtml(l.coupon_code)}</span>` : ''}
+                    <div class="meta">${l.checked_at ? 'lido em ' + escapeHtml(l.checked_at.replace(/-/g, '/')) + ' UTC' : 'ainda não coletado'}</div>
                   </div>
                 </div>
               </td>

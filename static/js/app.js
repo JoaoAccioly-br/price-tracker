@@ -10,7 +10,12 @@ const brl = v => v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currenc
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
-  if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    // erros de validação do FastAPI vêm como lista: [{msg: "..."}]
+    const detail = Array.isArray(body.detail) ? body.detail.map(d => d.msg).join('; ') : body.detail;
+    throw new Error(detail || r.statusText);
+  }
   return r.json();
 }
 

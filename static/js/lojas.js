@@ -35,8 +35,8 @@ function renderLojasView() {
         <div class="stat-card">
           <div class="stat-header">
             <span class="store-pill ${cls}" style="margin-left: -4px">
-              <span class="store-avatar">${s[0].toUpperCase()}</span>
-              ${s}
+              <span class="store-avatar">${escapeHtml(s[0].toUpperCase())}</span>
+              ${escapeHtml(s)}
             </span>
           </div>
           <div class="stat-value">${count}</div>
@@ -61,14 +61,14 @@ function renderLojasView() {
       <tr>
         <td>
           <span class="store-pill ${cls}">
-            <span class="store-avatar">${storeInit}</span>
-            ${l.store}
+            <span class="store-avatar">${escapeHtml(storeInit)}</span>
+            ${escapeHtml(l.store)}
           </span>
         </td>
         <td>
           <div class="prod-cell">
             <div class="prod-icon" style="width:28px; height:28px; font-size:12px"><i class="fa-solid fa-laptop"></i></div>
-            <span>${l.product_name}</span>
+            <span>${escapeHtml(l.product_name)}</span>
           </div>
         </td>
         <td><b>${brl(effPrice)}</b></td>
@@ -79,10 +79,10 @@ function renderLojasView() {
           </span>
         </td>
         <td style="color:var(--text-muted); font-size:12px">
-          ${l.checked_at ? l.checked_at.replace(/-/g, '/') + ' UTC' : 'Pendente'}
+          ${l.checked_at ? escapeHtml(l.checked_at.replace(/-/g, '/')) + ' UTC' : 'Pendente'}
         </td>
         <td>
-          <a href="${l.url}" target="_blank" rel="noopener" class="btn-outline" style="padding:4px 10px; font-size:12px; text-decoration:none">
+          <a href="${safeUrl(l.url)}" target="_blank" rel="noopener noreferrer" class="btn-outline" style="padding:4px 10px; font-size:12px; text-decoration:none">
             Visitar <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:10px; margin-left:4px"></i>
           </a>
         </td>

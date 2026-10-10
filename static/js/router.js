@@ -65,7 +65,7 @@ class ViewRouter {
       this.container.innerHTML = `
         <div style="padding: 30px; text-align: center; color: var(--accent-red)">
           <i class="fa-solid fa-triangle-exclamation" style="font-size: 28px; margin-bottom: 10px; display: block"></i>
-          Erro ao carregar tela: ${err.message}
+          Erro ao carregar tela: ${escapeHtml(err.message)}
         </div>
       `;
     }
