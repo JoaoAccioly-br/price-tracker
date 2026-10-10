@@ -1,6 +1,6 @@
-# Notebook Tracker
+# Price Tracker
 
-Acompanha o preço de notebooks em várias lojas, guarda o histórico e mostra tudo numa página com gráfico.
+Acompanha o preço de produtos em várias lojas, guarda o histórico e mostra tudo numa página com gráfico.
 
 ```
 cron/GitHub Actions → collector → scrapers → SQLite → FastAPI → static/index.html
