@@ -6,7 +6,20 @@ from app import db
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    import os
+
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    else:
+        db.init_db()
+        conn = db.get_conn()
+        with conn:
+            conn.execute("DELETE FROM prices")
+            conn.execute("DELETE FROM listings")
+            conn.execute("DELETE FROM products")
+            conn.execute("DELETE FROM app_settings")
+        conn.close()
     from app.main import app
 
     with TestClient(app) as c:

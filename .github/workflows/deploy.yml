@@ -22,6 +22,20 @@ jobs:
     name: Run Pytest
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: test_tracker
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -40,7 +54,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
-      - name: Run tests
+      - name: Run tests (SQLite)
+        run: python -m pytest -q
+
+      - name: Run tests (PostgreSQL)
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/test_tracker
         run: python -m pytest -q
 
   build-and-push:

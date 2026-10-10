@@ -54,6 +54,7 @@ def test_fetch_from_api_item(mock_get):
 def test_refresh_access_token(mock_post, monkeypatch, tmp_path):
     from app import db
 
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test_oauth.db")
     db.init_db()
 
