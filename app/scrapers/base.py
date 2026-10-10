@@ -230,12 +230,13 @@ def _check_request(request: httpx.Request) -> None:
     assert_public_url(str(request.url))
 
 
-def fetch_html(url: str, use_browser: bool = False) -> str:
+def fetch_html(url: str, use_browser: bool = False, headers: dict | None = None) -> str:
     assert_public_url(url)
     if use_browser:
         return _fetch_with_browser(url)
+    req_headers = {**HEADERS, **(headers or {})}
     with httpx.Client(
-        headers=HEADERS, timeout=20, follow_redirects=True, max_redirects=5,
+        headers=req_headers, timeout=20, follow_redirects=True, max_redirects=5,
         event_hooks={"request": [_check_request]},
     ) as client:
         with client.stream("GET", url) as resp:
