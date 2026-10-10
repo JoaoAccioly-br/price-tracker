@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from .collector import add_listener, collect_all, get_status, remove_listener
-from .db import get_conn, init_db
+from .db import DBConflictError, get_conn, init_db
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -297,7 +297,7 @@ def create_listing(body: ListingIn):
                     "VALUES (?, ?, ?, ?, ?)",
                     (body.product_id, body.store.strip(), body.url, body.css_selector, int(body.use_browser)),
                 )
-        except sqlite3.IntegrityError:
+        except (sqlite3.IntegrityError, DBConflictError):
             # só duplicidade vira 409; outros erros sobem como 500 (e aparecem no log)
             raise HTTPException(409, "Esse link já está cadastrado para o produto")
     finally:
