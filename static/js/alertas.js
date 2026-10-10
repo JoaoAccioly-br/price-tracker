@@ -224,7 +224,7 @@ function openNewRuleModal(defaultPid = null) {
   }
 
   sel.innerHTML = productsData.map(p =>
-    `<option value="${escapeHtml(p.id)}" ${defaultPid && p.id === defaultPid ? 'selected' : ''}>[${escapeHtml(p.category || 'Notebook')}] #${escapeHtml(p.id)} ${escapeHtml(p.name)}</option>`
+    `<option value="${escapeHtml(p.id)}" ${defaultPid && p.id === defaultPid ? 'selected' : ''}>[${escapeHtml(p.category || 'Notebook')}] ${escapeHtml(p.name)}</option>`
   ).join('');
 
   if (defaultPid) sel.value = defaultPid;

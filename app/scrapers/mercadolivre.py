@@ -250,7 +250,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
                     # 3. Anúncio direto (data['price'])
                     if price is None and data.get("price") is not None:
                         price = float(data["price"])
-                        available = data.get("status") == "active" and (data.get("available_quantity", 0) > 0)
+                        available = data.get("status", "active") == "active" and (data.get("available_quantity", 1) > 0)
 
                     # 4. Variações (pickers)
                     if price is None and "pickers" in data and isinstance(data["pickers"], list):
@@ -259,7 +259,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
                                 prod_bb = prod.get("buy_box_winner")
                                 if isinstance(prod_bb, dict) and prod_bb.get("price") is not None:
                                     price = float(prod_bb["price"])
-                                    available = prod_bb.get("status") == "active"
+                                    available = prod_bb.get("status", "active") == "active"
                                     break
                                 elif isinstance(prod_bb, dict) and prod_bb.get("item_id"):
                                     v_id = prod_bb.get("item_id")
@@ -285,7 +285,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
                                 c_bb = child_data.get("buy_box_winner")
                                 if isinstance(c_bb, dict) and c_bb.get("price") is not None:
                                     price = float(c_bb["price"])
-                                    available = c_bb.get("status") == "active"
+                                    available = c_bb.get("status", "active") == "active"
                                     name = child_data.get("title") or name
                                     break
                                 elif isinstance(c_bb, dict) and c_bb.get("item_id"):

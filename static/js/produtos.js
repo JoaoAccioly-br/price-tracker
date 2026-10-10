@@ -101,7 +101,7 @@ function renderProdutosView() {
       <div class="product-menu-item ${isActive ? 'active' : ''}" onclick="selectProductInDetail(${p.id})">
         <div class="p-item-title">
           <i class="${iconCls}" style="margin-right:6px; font-size:12px; color:var(--text-muted)"></i>
-          #${escapeHtml(p.id)} ${escapeHtml(p.name)}
+          ${escapeHtml(p.name)}
         </div>
         <div class="p-item-sub">Melhor <b>${brl(bestP)}</b> · ${escapeHtml(p.best_store || 'loja')}</div>
         <div>${badge}</div>
@@ -161,7 +161,7 @@ function renderProductDetailCard() {
         <div class="prod-icon"><i class="${iconCls}"></i></div>
         <div>
           <div style="display:flex; align-items:center; gap:8px">
-            <h3>#${escapeHtml(p.id)} ${escapeHtml(p.name)}</h3>
+            <h3>${escapeHtml(p.name)}</h3>
             <span style="font-size:11px; background:#fae9e9; color:var(--accent-red); padding:2px 8px; border-radius:99px; font-weight:700">${escapeHtml(p.category || 'Notebook')}</span>
           </div>
           <div class="sub">Melhor preço: <b>${brl(bestP)}</b> · alvo ${target ? brl(target) : 'não definido'}</div>
@@ -204,7 +204,7 @@ function renderProductDetailCard() {
                     </a>
                     ${isBest ? `<span class="tag-menor"><i class="fa-solid fa-tag" style="font-size:9px"></i> Menor preço</span>` : ''}
                     ${l.coupon_code ? `<span class="coupon-chip"><i class="fa-solid fa-ticket" style="font-size:9px"></i> ${escapeHtml(l.coupon_code)}</span>` : ''}
-                    <div class="meta">${l.checked_at ? 'lido em ' + escapeHtml(l.checked_at.replace(/-/g, '/')) + ' UTC' : 'ainda não coletado'}</div>
+                    <div class="meta">${l.checked_at ? 'lido em ' + escapeHtml(formatDateTimeBR(l.checked_at)) : 'ainda não coletado'}</div>
                   </div>
                 </div>
               </td>

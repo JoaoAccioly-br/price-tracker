@@ -161,7 +161,7 @@ def list_products():
         listings = by_product.get(p["id"], [])
         in_stock_listings = [
             l for l in listings
-            if l["last_price"] and l["available"]
+            if l["last_price"] and (l.get("available") is None or l.get("available") == 1 or l.get("available") is True)
         ]
         best_l = None
         best_p = None
@@ -171,6 +171,14 @@ def list_products():
                 key=lambda x: (x["final_price"] if x.get("final_price") is not None else x["last_price"]),
             )
             best_p = best_l["final_price"] if best_l.get("final_price") is not None else best_l["last_price"]
+        elif listings:
+            priced = [l for l in listings if l.get("last_price")]
+            if priced:
+                best_l = min(
+                    priced,
+                    key=lambda x: (x["final_price"] if x.get("final_price") is not None else x["last_price"]),
+                )
+                best_p = best_l["final_price"] if best_l.get("final_price") is not None else best_l["last_price"]
 
         p.update({
             "listings": listings,

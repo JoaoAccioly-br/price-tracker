@@ -23,3 +23,43 @@ function safeUrl(url) {
   if (/^https?:\/\//i.test(trimmed)) return escapeHtml(trimmed);
   return '#';
 }
+
+/**
+ * Converte data/hora salva em UTC para o Horário de Brasília (America/Sao_Paulo, UTC-3).
+ * Exemplo: "2026-10-10 20:30:15" -> "10/10/2026 17:30:15"
+ */
+function formatDateTimeBR(utcStr) {
+  if (!utcStr) return '';
+  const clean = String(utcStr).trim();
+  const iso = clean.replace(' ', 'T') + (clean.endsWith('Z') ? '' : 'Z');
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return clean;
+  return d.toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).replace(', ', ' ');
+}
+
+/**
+ * Converte data/hora salva em UTC para formato curto (Dia/Mês Hora:Minuto) em Brasília.
+ * Exemplo: "2026-10-10 20:30:15" -> "10/10 17:30"
+ */
+function formatDateTimeShortBR(utcStr) {
+  if (!utcStr) return '';
+  const clean = String(utcStr).trim();
+  const iso = clean.replace(' ', 'T') + (clean.endsWith('Z') ? '' : 'Z');
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return clean;
+  return d.toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).replace(', ', ' ');
+}

@@ -78,7 +78,7 @@ function renderLojasView() {
           </span>
         </td>
         <td style="color:var(--text-muted); font-size:12px">
-          ${l.checked_at ? escapeHtml(l.checked_at.replace(/-/g, '/')) + ' UTC' : 'Pendente'}
+          ${l.checked_at ? escapeHtml(formatDateTimeBR(l.checked_at)) : 'Pendente'}
         </td>
         <td>
           <div style="display:flex; gap:6px; align-items:center">

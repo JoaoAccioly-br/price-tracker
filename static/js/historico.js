@@ -110,7 +110,7 @@ async function loadHistoricoData(pid) {
   }
 
   // 4. Gráfico Multi-Loja com Linha de Alvo
-  const labels = [...new Set(activeRows.map(r => r.checked_at.slice(5, 16)))].sort();
+  const labels = [...new Set(activeRows.map(r => formatDateTimeShortBR(r.checked_at)))].sort();
   const stores = [...new Set(activeRows.map(r => r.store))];
 
   const storeColors = {
@@ -129,7 +129,7 @@ async function loadHistoricoData(pid) {
     borderWidth: 2,
     pointRadius: 3,
     data: labels.map(t => {
-      const match = activeRows.find(r => r.store === s && r.checked_at.slice(5, 16) === t);
+      const match = activeRows.find(r => r.store === s && formatDateTimeShortBR(r.checked_at) === t);
       return match ? (match.final_price || match.price) : null;
     }),
   }));
@@ -234,7 +234,7 @@ async function renderChangesFeed() {
           <div class="change-feed-text">
             <h5>${escapeHtml(item.product)} · ${escapeHtml(item.store)}</h5>
             <p>${actionText} ${brl(item.prevPrice)} para <b>${brl(item.currPrice)}</b></p>
-            <span class="time">${item.time ? escapeHtml(item.time.slice(5, 16).replace('-', '/')) : 'recente'} UTC</span>
+            <span class="time">${item.time ? escapeHtml(formatDateTimeBR(item.time)) : 'recente'}</span>
           </div>
         </div>
       `;

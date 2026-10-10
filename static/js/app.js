@@ -106,7 +106,7 @@ async function updateLastRead() {
     const el = document.getElementById('last-read-val');
     if (el) {
       if (s.last_run) {
-        el.textContent = s.last_run.replace(/-/g, '/') + ' UTC';
+        el.textContent = formatDateTimeBR(s.last_run);
       } else {
         el.textContent = 'Aguardando coleta';
       }
