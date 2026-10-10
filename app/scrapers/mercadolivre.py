@@ -178,18 +178,85 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
                 available = True
                 name = data.get("title") or data.get("name")
 
-                if "buy_box_winner" in data and isinstance(data["buy_box_winner"], dict):
-                    bb = data["buy_box_winner"]
-                    price = float(bb["price"]) if bb.get("price") is not None else None
+                bb = data.get("buy_box_winner")
+                log.warning("[ML-API] Conteúdo de buy_box_winner: %s", bb)
+
+                # 1. Se buy_box_winner tiver o preço diretamente
+                if isinstance(bb, dict):
+                    if bb.get("price") is not None:
+                        price = float(bb["price"])
                     if "status" in bb:
                         available = bb.get("status") == "active"
 
+                    # Se não tiver o preço direto, mas tiver o item_id do vendedor vencedor:
+                    winner_item_id = bb.get("item_id") or bb.get("id")
+                    if price is None and winner_item_id:
+                        log.warning("[ML-API] Consultando item vencedor da Buy Box: %s...", winner_item_id)
+                        item_r = httpx.get(
+                            f"https://api.mercadolibre.com/items/{winner_item_id}",
+                            headers=headers,
+                            timeout=10,
+                        )
+                        if item_r.status_code == 200:
+                            item_data = item_r.json()
+                            if item_data.get("price") is not None:
+                                price = float(item_data["price"])
+                                available = item_data.get("status") == "active" and (
+                                    item_data.get("available_quantity", 0) > 0
+                                )
+                                name = item_data.get("title") or name
+                                log.warning(
+                                    "[ML-API] Preço obtido do item vencedor (%s): R$ %.2f",
+                                    winner_item_id,
+                                    price,
+                                )
+                elif isinstance(bb, str) and bb.startswith("MLB"):
+                    winner_item_id = bb
+                    log.warning("[ML-API] Consultando item vencedor da Buy Box (string): %s...", winner_item_id)
+                    item_r = httpx.get(
+                        f"https://api.mercadolibre.com/items/{winner_item_id}",
+                        headers=headers,
+                        timeout=10,
+                    )
+                    if item_r.status_code == 200:
+                        item_data = item_r.json()
+                        if item_data.get("price") is not None:
+                            price = float(item_data["price"])
+                            available = item_data.get("status") == "active" and (
+                                item_data.get("available_quantity", 0) > 0
+                            )
+                            name = item_data.get("title") or name
+                            log.warning(
+                                "[ML-API] Preço obtido do item vencedor (%s): R$ %.2f",
+                                winner_item_id,
+                                price,
+                            )
+
+                # 2. Se for anúncio direto (data['price'])
                 if price is None and data.get("price") is not None:
                     price = float(data["price"])
                     available = data.get("status") == "active" and (data.get("available_quantity", 0) > 0)
 
+                # 3. Fallback: verificar se há variação/picker ou children_ids com preço
+                if price is None and data.get("children_ids"):
+                    first_child = data["children_ids"][0]
+                    log.warning("[ML-API] Consultando child item do catálogo: %s...", first_child)
+                    child_r = httpx.get(
+                        f"https://api.mercadolibre.com/items/{first_child}",
+                        headers=headers,
+                        timeout=10,
+                    )
+                    if child_r.status_code == 200:
+                        child_data = child_r.json()
+                        if child_data.get("price") is not None:
+                            price = float(child_data["price"])
+                            available = child_data.get("status") == "active" and (
+                                child_data.get("available_quantity", 0) > 0
+                            )
+                            name = child_data.get("title") or name
+
                 if price is not None:
-                    log.warning("[ML-API] Sucesso! Preço obtido via API: R$ %.2f", price)
+                    log.warning("[ML-API] Sucesso! Preço final obtido via API: R$ %.2f", price)
                     return PriceResult(
                         price=price,
                         available=available,
@@ -198,7 +265,10 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
                         final_price=price,
                     )
                 else:
-                    log.warning("[ML-API] Resposta HTTP 200 recebida, mas preço não encontrado no JSON: %s", list(data.keys()))
+                    log.warning(
+                        "[ML-API] Resposta HTTP 200 recebida, mas preço não encontrado no JSON. buy_box_winner=%s",
+                        bb,
+                    )
             elif r.status_code == 401:
                 log.warning(
                     "[ML-API] HTTP 401 Unauthorized: token inválido ou expirado."
