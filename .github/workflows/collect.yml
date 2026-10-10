@@ -1,0 +1,39 @@
+name: Coleta Automática de Preços
+
+on:
+  schedule:
+    # A cada 6 horas: 00:00, 06:00, 12:00, 18:00 UTC (21:00, 03:00, 09:00, 15:00 no horário de Brasília)
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Permite disparar manualmente com 1 clique pela aba Actions do GitHub
+
+jobs:
+  collect:
+    name: Disparar Coleta de Preços
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Acordar servidor e disparar coleta
+        env:
+          APP_URL: ${{ vars.APP_URL || 'https://price-tracker-8nol.onrender.com' }}
+          APP_USER: ${{ secrets.APP_USERNAME }}
+          APP_PASS: ${{ secrets.APP_PASSWORD }}
+        run: |
+          echo "Disparando coleta em: $APP_URL/api/collect"
+
+          AUTH_FLAG=""
+          if [ -n "$APP_USER" ] && [ -n "$APP_PASS" ]; then
+            AUTH_FLAG="-u $APP_USER:$APP_PASS"
+          fi
+
+          # No plano gratuito do Render o container pode demorar 20-50s para acordar (cold start).
+          # As opções de retry garantem que a requisição aguarde o servidor responder com 202 Accepted.
+          curl -s -S -f -X POST "$APP_URL/api/collect" \
+            $AUTH_FLAG \
+            -H "Content-Type: application/json" \
+            --retry 5 \
+            --retry-delay 15 \
+            --retry-all-errors \
+            --max-time 120
+
+          echo "Coleta disparada com sucesso no Render!"
+
