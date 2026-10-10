@@ -109,10 +109,14 @@ def refresh_access_token() -> str | None:
             new_expires_at = time.time() + float(expires_in)
 
             if new_access_token:
-                set_setting("ml_access_token", new_access_token)
-                set_setting("ml_token_expires_at", str(new_expires_at))
-                if new_refresh_token:
-                    set_setting("ml_refresh_token", new_refresh_token)
+                try:
+                    set_setting("ml_access_token", new_access_token)
+                    set_setting("ml_token_expires_at", str(new_expires_at))
+                    if new_refresh_token:
+                        set_setting("ml_refresh_token", new_refresh_token)
+                except Exception as db_err:
+                    log.warning("[ML-OAuth] Erro ao persistir tokens no banco: %s", db_err)
+
                 log.info(
                     "[ML-OAuth] Token renovado com sucesso! Válido por %.1f horas.",
                     float(expires_in) / 3600,
@@ -125,7 +129,7 @@ def refresh_access_token() -> str | None:
                 r.text[:300],
             )
     except Exception as exc:
-        log.warning("[ML-OAuth] Exceção de rede ao renovar token: %s", exc)
+        log.warning("[ML-OAuth] Exceção ao renovar token: %s", exc)
     return None
 
 

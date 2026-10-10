@@ -129,8 +129,9 @@ class PostgresConnectionWrapper:
         """Converte marcadores '?' em '%s' e adiciona RETURNING id em INSERTs quando necessário."""
         # Se for um INSERT sem RETURNING, insere RETURNING id para sabermos o lastrowid
         is_insert = bool(re.match(r"^\s*INSERT\s+INTO", sql, re.IGNORECASE))
+        is_app_settings = "app_settings" in sql.lower()
         has_returning = "RETURNING" in sql.upper()
-        needs_returning = is_insert and not has_returning
+        needs_returning = is_insert and not has_returning and not is_app_settings
 
         # Transforma datetime('now') se por acaso vier em alguma query
         sql_converted = sql.replace("datetime('now')", "TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')")
