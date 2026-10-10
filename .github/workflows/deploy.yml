@@ -7,13 +7,9 @@ on:
     branches: ["main"]
   workflow_dispatch:
 
-# Princípio do menor privilégio: o GITHUB_TOKEN só lê o repositório,
-# cada job pede explicitamente o que mais precisar.
 permissions:
   contents: read
 
-# Um push novo cancela a execução anterior do mesmo PR (economiza minutos);
-# na main as execuções enfileiram em vez de cancelar no meio de um deploy.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -30,7 +26,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
-          persist-credentials: false   # não deixa o token salvo no .git/config
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -54,7 +50,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      packages: write       # publicar no GHCR
+      packages: write
     outputs:
       image: ${{ steps.image.outputs.name }}
       digest: ${{ steps.build.outputs.digest }}
@@ -67,12 +63,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      # Nomes de imagem no GHCR precisam ser minúsculos (o owner tem maiúsculas)
       - name: Compute image name
         id: image
         run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      # Em PRs só valida que a imagem builda; login/push apenas na main
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -100,52 +94,66 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # Atestados de supply-chain: de onde/como a imagem foi gerada + lista de pacotes
           provenance: mode=max
           sbom: true
 
-  deploy:
+  deploy-render:
+    name: Deploy to Render
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger Render Deploy Hook
+        env:
+          RENDER_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$RENDER_HOOK" ]; then
+            echo "::notice::RENDER_DEPLOY_HOOK não configurado - deploy no Render ignorado."
+            exit 0
+          fi
+          echo "Disparando deploy seguro no Render..."
+          curl -s -S -f -X POST "$RENDER_HOOK" > /dev/null
+          echo "Deploy no Render iniciado com sucesso!"
+
+  deploy-ssh:
     name: Deploy to Server via SSH
     needs: build-and-push
-    # Só faz deploy a partir da main (nunca de PRs ou de outras branches)
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Environment "production": permite exigir aprovação manual e restringir
-    # os secrets de deploy apenas a este job (Settings > Environments).
-    environment: production
-    concurrency:
-      group: deploy-production
-      cancel-in-progress: false
     permissions:
       contents: read
-      packages: read        # o servidor usa este token para baixar a imagem
-    env:
-      # secrets não podem ser usados direto em "if:", por isso passam por env
-      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      packages: read
     steps:
-      - name: Skip (server not configured)
-        if: env.SERVER_HOST == ''
-        run: echo "::notice::SERVER_HOST não configurado - deploy ignorado."
+      - name: Check if server is configured
+        id: check_server
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          if [ -z "$SERVER_HOST" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SERVER_HOST não configurado - deploy via SSH ignorado."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Checkout compose file
-        if: env.SERVER_HOST != ''
+        if: steps.check_server.outputs.configured == 'true'
         uses: actions/checkout@v7
         with:
           persist-credentials: false
           sparse-checkout: docker-compose.yml
           sparse-checkout-cone-mode: false
 
-      # SSH nativo em vez de action de terceiros: menos código externo com acesso
-      # à chave privada, e o host é verificado contra SERVER_KNOWN_HOSTS
-      # (evita man-in-the-middle; StrictHostKeyChecking=yes).
       - name: Configure SSH
-        if: env.SERVER_HOST != ''
+        if: steps.check_server.outputs.configured == 'true'
         env:
           SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
           SSH_USER: ${{ secrets.SERVER_USER }}
           SSH_PORT: ${{ secrets.SERVER_PORT || '22' }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
@@ -164,9 +172,8 @@ jobs:
           EOF
 
       - name: Deploy
-        if: env.SERVER_HOST != ''
+        if: steps.check_server.outputs.configured == 'true'
         env:
-          # Imagem fixada pelo digest: o servidor roda exatamente o que foi testado
           IMAGE: ${{ needs.build-and-push.outputs.image }}@${{ needs.build-and-push.outputs.digest }}
           DEPLOY_PATH: ${{ vars.DEPLOY_PATH || 'price-tracker' }}
           GHCR_USER: ${{ github.actor }}
@@ -174,26 +181,12 @@ jobs:
         run: |
           ssh deploy-target "mkdir -p '$DEPLOY_PATH'"
           scp docker-compose.yml "deploy-target:$DEPLOY_PATH/docker-compose.yml"
-
-          # Token vai via stdin (não aparece em 'ps' nem no histórico do servidor)
           printf '%s' "$GHCR_TOKEN" | ssh deploy-target "docker login ghcr.io -u '$GHCR_USER' --password-stdin"
-
-          # --wait: só considera sucesso quando o healthcheck do container passar.
-          # logout no final: o token expira com o job, não há motivo para guardá-lo.
           ssh deploy-target "cd '$DEPLOY_PATH' \
             && export IMAGE='$IMAGE' \
             && docker compose pull \
             && docker compose up -d --remove-orphans --wait --wait-timeout 90; \
             rc=\$?; docker logout ghcr.io >/dev/null; docker image prune -f >/dev/null; exit \$rc"
-
-      - name: Deploy to Render (via Deploy Hook)
-        if: "${{ secrets.RENDER_DEPLOY_HOOK != '' }}"
-        env:
-          RENDER_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
-        run: |
-          echo "Disparando deploy seguro no Render..."
-          curl -s -S -f -X POST "$RENDER_HOOK" > /dev/null
-          echo "Deploy no Render iniciado com sucesso!"
 
       - name: Cleanup SSH key
         if: always()
