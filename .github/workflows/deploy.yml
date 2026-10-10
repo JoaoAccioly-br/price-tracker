@@ -186,6 +186,15 @@ jobs:
             && docker compose up -d --remove-orphans --wait --wait-timeout 90; \
             rc=\$?; docker logout ghcr.io >/dev/null; docker image prune -f >/dev/null; exit \$rc"
 
+      - name: Deploy to Render (via Deploy Hook)
+        if: "${{ secrets.RENDER_DEPLOY_HOOK != '' }}"
+        env:
+          RENDER_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          echo "Disparando deploy seguro no Render..."
+          curl -s -S -f -X POST "$RENDER_HOOK" > /dev/null
+          echo "Deploy no Render iniciado com sucesso!"
+
       - name: Cleanup SSH key
         if: always()
         run: rm -rf ~/.ssh
