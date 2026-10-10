@@ -207,7 +207,7 @@ def get_conn():
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-        raw = psycopg.connect(db_url, row_factory=dict_row)
+        raw = psycopg.connect(db_url, row_factory=dict_row, autocommit=True)
         return PostgresConnectionWrapper(raw)
 
     # Fallback: SQLite local

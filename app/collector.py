@@ -126,6 +126,7 @@ def _collect_all(delay: tuple[float, float]) -> dict:
                        VALUES (?, ?, ?, ?, ?)""",
                     (row["id"], result.price, int(result.available), result.coupon_code, effective_price),
                 )
+                conn.commit()
             stats["ok"] += 1
             COLLECTOR_STATE["stats"] = stats
             coupon_info = f" [cupom {result.coupon_code} -> R$ {effective_price:.2f}]" if result.coupon_code else ""

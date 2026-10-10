@@ -32,8 +32,8 @@ APP_USERNAME = os.environ.get("APP_USERNAME", "")
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 ENABLE_DOCS = os.environ.get("ENABLE_DOCS", "").lower() in ("1", "true", "yes")
 
-# Rotas liberadas sem autenticação (healthcheck do Docker e diagnóstico ML)
-PUBLIC_PATHS = {"/api/health", "/api/ml/status"}
+# Rotas liberadas sem autenticação (healthcheck do Docker)
+PUBLIC_PATHS = {"/api/health"}
 
 
 @asynccontextmanager
@@ -125,35 +125,6 @@ class ListingIn(BaseModel):
 def health():
     """Healthcheck leve (sem consultar o banco) usado pelo Docker."""
     return {"status": "ok"}
-
-
-@app.get("/api/ml/status")
-def ml_status():
-    """Diagnóstico do status da integração oficial do Mercado Livre."""
-    from .db import get_setting
-
-    client_id = os.environ.get("MERCADOLIVRE_CLIENT_ID", "").strip()
-    client_secret = os.environ.get("MERCADOLIVRE_CLIENT_SECRET", "").strip()
-    refresh_env = os.environ.get("MERCADOLIVRE_REFRESH_TOKEN", "").strip()
-    static_token = os.environ.get("MERCADOLIVRE_TOKEN", "").strip()
-    db_token = get_setting("ml_access_token")
-    db_expires_at = get_setting("ml_token_expires_at")
-    db_refresh = get_setting("ml_refresh_token")
-
-    return {
-        "client_id_configured": bool(client_id),
-        "client_secret_configured": bool(client_secret),
-        "refresh_token_env_configured": bool(refresh_env),
-        "static_token_env_configured": bool(static_token),
-        "db_access_token_present": bool(db_token),
-        "db_token_expires_at": db_expires_at,
-        "db_refresh_token_present": bool(db_refresh),
-        "active_token_preview": (
-            (db_token[:15] + "...")
-            if db_token
-            else ((static_token[:15] + "...") if static_token else None)
-        ),
-    }
 
 
 @app.get("/api/products")

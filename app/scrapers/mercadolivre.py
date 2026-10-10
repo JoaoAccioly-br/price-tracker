@@ -177,10 +177,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
     }
     for api_url in endpoints:
         try:
-            endpoint_type = "catálogo/produto" if "products" in api_url else ("busca" if "search" in api_url else "item")
-            log.warning("[ML-API] Consultando API oficial (%s) para %s...", endpoint_type, mlb_id)
             r = httpx.get(api_url, headers=headers, timeout=10)
-            log.warning("[ML-API] Resposta HTTP %s em %s", r.status_code, api_url)
             if r.status_code == 200:
                 data = r.json()
                 price = None
@@ -205,17 +202,11 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
                             price = float(item_price)
                             available = item.get("status") == "active" or (item.get("available_quantity", 0) > 0)
                             name = item.get("title") or name
-                            log.warning(
-                                "[ML-API] Preço encontrado na lista de ofertas (%s): R$ %.2f",
-                                item.get("id"),
-                                price,
-                            )
                             break
 
                 # 2. Objeto de produto do catálogo
                 if price is None and isinstance(data, dict):
                     bb = data.get("buy_box_winner")
-                    log.warning("[ML-API] Conteúdo de buy_box_winner: %s", bb)
 
                     # Se buy_box_winner tiver o preço diretamente
                     if isinstance(bb, dict):
@@ -226,7 +217,6 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
 
                         winner_item_id = bb.get("item_id") or bb.get("id")
                         if price is None and winner_item_id:
-                            log.warning("[ML-API] Consultando item vencedor da Buy Box: %s...", winner_item_id)
                             item_r = httpx.get(
                                 f"https://api.mercadolibre.com/items/{winner_item_id}",
                                 headers=headers,
@@ -243,7 +233,6 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
 
                     elif isinstance(bb, str) and bb.startswith("MLB"):
                         winner_item_id = bb
-                        log.warning("[ML-API] Consultando item vencedor da Buy Box (string): %s...", winner_item_id)
                         item_r = httpx.get(
                             f"https://api.mercadolibre.com/items/{winner_item_id}",
                             headers=headers,
@@ -271,7 +260,6 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
                                 if isinstance(prod_bb, dict) and prod_bb.get("price") is not None:
                                     price = float(prod_bb["price"])
                                     available = prod_bb.get("status") == "active"
-                                    log.warning("[ML-API] Preço obtido da variação picker (%s): R$ %.2f", prod.get("id"), price)
                                     break
                                 elif isinstance(prod_bb, dict) and prod_bb.get("item_id"):
                                     v_id = prod_bb.get("item_id")
@@ -280,7 +268,6 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
                                         price = float(v_r.json()["price"])
                                         available = True
                                         name = v_r.json().get("title") or name
-                                        log.warning("[ML-API] Preço obtido do item da variação (%s): R$ %.2f", v_id, price)
                                         break
                             if price is not None:
                                 break
@@ -288,7 +275,6 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
                     # 5. Children IDs
                     if price is None and data.get("children_ids"):
                         for child_id in data["children_ids"][:3]:
-                            log.warning("[ML-API] Consultando child do catálogo: %s...", child_id)
                             child_r = httpx.get(
                                 f"https://api.mercadolibre.com/products/{child_id}",
                                 headers=headers,
@@ -312,7 +298,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
                                         break
 
                 if price is not None:
-                    log.warning("[ML-API] Sucesso! Preço final obtido via API: R$ %.2f", price)
+                    log.info("[ML-API] Preço R$ %.2f obtido com sucesso via API oficial (%s)", price, api_url)
                     return PriceResult(
                         price=price,
                         available=available,
@@ -334,10 +320,9 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
             elif r.status_code == 403:
                 log.warning("[ML-API] HTTP 403 Forbidden para %s.", api_url)
             elif r.status_code == 404:
-                log.warning("[ML-API] HTTP 404 Not Found para %s (tentando próximo endpoint se houver)...", api_url)
                 continue
             else:
-                log.warning("[ML-API] Resposta HTTP %s em %s: %s", r.status_code, api_url, r.text[:200])
+                log.info("[ML-API] Status HTTP %s para %s", r.status_code, api_url)
         except Exception as exc:
             log.warning("[ML-API] Erro ao conectar na API (%s): %s", api_url, exc)
     return None
