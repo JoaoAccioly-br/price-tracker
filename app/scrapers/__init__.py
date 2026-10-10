@@ -34,11 +34,15 @@ def scrape(url: str, css_selector: str | None = None,
 
     # 1. Suporte à API oficial do Mercado Livre
     if "mercadolivre.com.br" in netloc:
-        ml_token = os.environ.get("MERCADOLIVRE_TOKEN", "").strip()
+        ml_token = os.environ.get("MERCADOLIVRE_TOKEN", "").strip() or os.environ.get("MERCADOLIVRE_ACCESS_TOKEN", "").strip()
         if ml_token:
             api_res = mercadolivre.fetch_from_api(url, ml_token)
             if api_res and api_res.price is not None:
                 return api_res
+        else:
+            mercadolivre.log.info(
+                "[ML] MERCADOLIVRE_TOKEN não configurado no ambiente. Usando scraping como fallback."
+            )
 
     # 2. Scraping HTTP tradicional
     parser = CUSTOM_PARSERS.get(netloc, parse_html)

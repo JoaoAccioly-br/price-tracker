@@ -5,6 +5,7 @@ Suporta:
    Consulta direta em https://api.mercadolibre.com/items/{MLB_ID}, sem risco de bloqueio WAF/CloudFront.
 2. Web scraping como fallback.
 """
+import logging
 import os
 import re
 from urllib.parse import urlparse
@@ -13,6 +14,8 @@ import httpx
 from bs4 import BeautifulSoup
 
 from .base import PriceResult, parse_brl, parse_html
+
+log = logging.getLogger("collector")
 
 # Headers aceitos para scraping
 ML_HEADERS = {
@@ -35,29 +38,64 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
     """Consulta a API oficial do Mercado Livre usando o token configurado."""
     mlb_id = extract_mlb_id(url)
     if not mlb_id:
+        log.warning("[ML-API] Não foi possível extrair o código MLB da URL: %s", url)
         return None
 
-    api_url = f"https://api.mercadolibre.com/items/{mlb_id}"
+    is_catalog = "/p/" in url
+    endpoints = (
+        [f"https://api.mercadolibre.com/products/{mlb_id}", f"https://api.mercadolibre.com/items/{mlb_id}"]
+        if is_catalog
+        else [f"https://api.mercadolibre.com/items/{mlb_id}", f"https://api.mercadolibre.com/products/{mlb_id}"]
+    )
+
     headers = {
         "Authorization": f"Bearer {token.strip()}",
         "Accept": "application/json",
     }
-    try:
-        r = httpx.get(api_url, headers=headers, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            price = float(data.get("price")) if data.get("price") is not None else None
-            available = data.get("status") == "active" and (data.get("available_quantity", 0) > 0)
-            name = data.get("title")
-            return PriceResult(
-                price=price,
-                available=available,
-                name=name,
-                source="ml:api-oficial",
-                final_price=price,
-            )
-    except Exception:
-        pass
+    for api_url in endpoints:
+        try:
+            endpoint_type = "catálogo/produto" if "products" in api_url else "item"
+            log.info("[ML-API] Consultando API oficial (%s) para %s...", endpoint_type, mlb_id)
+            r = httpx.get(api_url, headers=headers, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                price = None
+                available = True
+                name = data.get("title") or data.get("name")
+
+                if "buy_box_winner" in data and isinstance(data["buy_box_winner"], dict):
+                    bb = data["buy_box_winner"]
+                    price = float(bb["price"]) if bb.get("price") is not None else None
+                    if "status" in bb:
+                        available = bb.get("status") == "active"
+
+                if price is None and data.get("price") is not None:
+                    price = float(data["price"])
+                    available = data.get("status") == "active" and (data.get("available_quantity", 0) > 0)
+
+                if price is not None:
+                    log.info("[ML-API] Sucesso! Preço obtido via API: R$ %.2f", price)
+                    return PriceResult(
+                        price=price,
+                        available=available,
+                        name=name,
+                        source="ml:api-oficial",
+                        final_price=price,
+                    )
+            elif r.status_code == 401:
+                log.warning(
+                    "[ML-API] HTTP 401 Unauthorized: token inválido ou expirado. "
+                    "Verifique se MERCADOLIVRE_TOKEN é um Access Token válido (Bearer), não apenas o Client ID."
+                )
+                break
+            elif r.status_code == 403:
+                log.warning("[ML-API] HTTP 403 Forbidden para %s.", api_url)
+            elif r.status_code == 404:
+                continue
+            else:
+                log.warning("[ML-API] Resposta HTTP %s em %s: %s", r.status_code, api_url, r.text[:200])
+        except Exception as exc:
+            log.warning("[ML-API] Erro ao conectar na API (%s): %s", api_url, exc)
     return None
 
 
