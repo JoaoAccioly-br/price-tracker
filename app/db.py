@@ -168,9 +168,14 @@ class PostgresConnectionWrapper:
         self._raw.close()
 
     def commit(self):
+        # Se estiver dentro de um bloco de transação com self._tx, o psycopg3 já comita ao sair
+        if hasattr(self, "_tx") and self._tx is not None:
+            return
         self._raw.commit()
 
     def rollback(self):
+        if hasattr(self, "_tx") and self._tx is not None:
+            return
         self._raw.rollback()
 
     def __enter__(self):
