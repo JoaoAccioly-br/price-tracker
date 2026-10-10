@@ -161,11 +161,19 @@ class PostgresConnectionWrapper:
         self._raw.rollback()
 
     def __enter__(self):
-        self._raw.__enter__()
+        # No sqlite3, 'with conn:' abre uma transação e comita/rollbacka no final SEM fechar a conexão.
+        # No psycopg3, 'with raw_conn:' fecha a conexão ao sair!
+        # Para ter o mesmo comportamento do sqlite3, usamos self._raw.transaction().
+        self._tx = self._raw.transaction()
+        self._tx.__enter__()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        return self._raw.__exit__(exc_type, exc_val, exc_tb)
+        if hasattr(self, "_tx") and self._tx is not None:
+            ret = self._tx.__exit__(exc_type, exc_val, exc_tb)
+            self._tx = None
+            return ret
+        return False
 
 
 def is_postgres() -> bool:
