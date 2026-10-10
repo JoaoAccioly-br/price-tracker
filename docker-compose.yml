@@ -21,6 +21,7 @@ services:
       APP_USERNAME: ${APP_USERNAME:-}
       APP_PASSWORD: ${APP_PASSWORD:-}
       DATABASE_URL: ${DATABASE_URL:-}
+      MERCADOLIVRE_TOKEN: ${MERCADOLIVRE_TOKEN:-}
 
     volumes:
       # Volume nomeado: já nasce com o dono correto (usuário 'app' da imagem).

@@ -230,10 +230,8 @@ def _check_request(request: httpx.Request) -> None:
     assert_public_url(str(request.url))
 
 
-def fetch_html(url: str, use_browser: bool = False, headers: dict | None = None) -> str:
+def fetch_html(url: str, headers: dict | None = None) -> str:
     assert_public_url(url)
-    if use_browser:
-        return _fetch_with_browser(url)
     req_headers = {**HEADERS, **(headers or {})}
     with httpx.Client(
         headers=req_headers, timeout=20, follow_redirects=True, max_redirects=5,
@@ -250,21 +248,5 @@ def fetch_html(url: str, use_browser: bool = False, headers: dict | None = None)
             return b"".join(chunks).decode(resp.encoding or "utf-8", errors="replace")
 
 
-def _fetch_with_browser(url: str) -> str:
-    # import tardio: Playwright é opcional (pip install playwright && playwright install chromium)
-    from playwright.sync_api import sync_playwright
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        try:
-            page = browser.new_page(user_agent=HEADERS["User-Agent"])
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(2000)  # deixa o JS da página rodar
-            html = page.content()
-        finally:
-            browser.close()  # evita processos chromium órfãos em caso de erro
-    return html
-
-
-def scrape(url: str, css_selector: str | None = None, use_browser: bool = False) -> PriceResult:
-    return parse_html(fetch_html(url, use_browser), css_selector)
+def scrape(url: str, css_selector: str | None = None) -> PriceResult:
+    return parse_html(fetch_html(url), css_selector)

@@ -56,7 +56,6 @@ async function handleCreateListing(e) {
       store: f.get('store'),
       url: f.get('url'),
       css_selector: f.get('css_selector') || null,
-      use_browser: f.get('use_browser') === 'on',
     });
     alert('Link adicionado com sucesso!');
     e.target.reset();

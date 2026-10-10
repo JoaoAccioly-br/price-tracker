@@ -176,6 +176,7 @@ function renderProductDetailCard() {
           <th>Loja</th>
           <th style="text-align:right">Preço</th>
           <th style="text-align:right">Diferença</th>
+          <th style="text-align:center; width:40px">Ações</th>
         </tr>
       </thead>
       <tbody>
@@ -213,13 +214,18 @@ function renderProductDetailCard() {
                 ${l.available === 0 ? '<div style="color:var(--text-muted); font-size:11px; font-weight:normal">indisponível</div>' : ''}
               </td>
               <td class="diff-cell">${diffStr}</td>
+              <td style="text-align:center">
+                <button onclick="handleDeleteListingDetail(${l.id})" class="btn-outline" style="padding:4px 8px; font-size:11px; color:var(--accent-red); border-color:#fae9e9" title="Excluir este link">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+              </td>
             </tr>
           `;
         }).join('')}
       </tbody>
     </table>
 
-    <div style="margin-top: 20px; display:flex; gap:10px">
+    <div style="margin-top: 20px; display:flex; gap:10px; flex-wrap:wrap">
       <button class="btn-outline" id="chart-toggle-btn" onclick="toggleProductChart(${p.id})">
         <i class="fa-solid fa-chart-line"></i>
         <span>Ver histórico</span>
@@ -227,6 +233,10 @@ function renderProductDetailCard() {
       <button class="btn-outline" onclick="openEditRuleModal(${p.id})">
         <i class="fa-solid fa-bell"></i>
         <span>Configurar alerta</span>
+      </button>
+      <button class="btn-outline" onclick="handleDeleteProduct(${p.id})" style="color:var(--accent-red); border-color:#fae9e9; margin-left:auto">
+        <i class="fa-solid fa-trash-can"></i>
+        <span>Excluir produto</span>
       </button>
     </div>
     <div class="chart-box" id="chart-wrap" hidden style="margin-top:16px">
@@ -274,3 +284,29 @@ async function toggleProductChart(pid) {
     }
   });
 }
+
+async function handleDeleteProduct(pid) {
+  if (!confirm('Deseja realmente excluir este produto e todos os links/histórico dele?')) return;
+  try {
+    const res = await fetch(`/api/products/${pid}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error((await res.json()).detail || 'Erro ao excluir produto');
+    selectedProductId = null;
+    await load();
+    renderProdutosView();
+  } catch (err) {
+    alert('Erro ao excluir produto: ' + err.message);
+  }
+}
+
+async function handleDeleteListingDetail(lid) {
+  if (!confirm('Deseja excluir este link de compra?')) return;
+  try {
+    const res = await fetch(`/api/listings/${lid}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error((await res.json()).detail || 'Erro ao excluir link');
+    await load();
+    renderProdutosView();
+  } catch (err) {
+    alert('Erro ao excluir link: ' + err.message);
+  }
+}
+

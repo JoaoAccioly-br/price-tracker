@@ -116,7 +116,6 @@ class ListingIn(BaseModel):
     store: str = Field(min_length=1, max_length=60)
     url: str = Field(min_length=10, max_length=2048)
     css_selector: str | None = Field(None, max_length=300)
-    use_browser: bool = False
 
     _check_url = field_validator("url")(_validate_http_url)
 
@@ -293,9 +292,9 @@ def create_listing(body: ListingIn):
         try:
             with conn:
                 cur = conn.execute(
-                    "INSERT INTO listings (product_id, store, url, css_selector, use_browser) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (body.product_id, body.store.strip(), body.url, body.css_selector, int(body.use_browser)),
+                    "INSERT INTO listings (product_id, store, url, css_selector) "
+                    "VALUES (?, ?, ?, ?)",
+                    (body.product_id, body.store.strip(), body.url, body.css_selector),
                 )
         except (sqlite3.IntegrityError, DBConflictError):
             # só duplicidade vira 409; outros erros sobem como 500 (e aparecem no log)
@@ -303,6 +302,20 @@ def create_listing(body: ListingIn):
     finally:
         conn.close()
     return {"id": cur.lastrowid}
+
+
+@app.delete("/api/listings/{listing_id}")
+def delete_listing(listing_id: int):
+    """Remove um link de loja e seu histórico de preços associado."""
+    conn = get_conn()
+    try:
+        with conn:
+            cur = conn.execute("DELETE FROM listings WHERE id = ?", (listing_id,))
+    finally:
+        conn.close()
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Link não encontrado")
+    return {"status": "removido", "id": listing_id}
 
 
 @app.get("/api/collect/status")

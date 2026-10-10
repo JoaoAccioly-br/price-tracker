@@ -98,7 +98,7 @@ def _collect_all(delay: tuple[float, float]) -> dict:
             if i:
                 time.sleep(random.uniform(*delay))  # não martelar o site
             try:
-                result = scrape(row["url"], row["css_selector"], bool(row["use_browser"]))
+                result = scrape(row["url"], row["css_selector"])
             except Exception as exc:  # rede, bloqueio, timeout...
                 log.warning("[%s] erro em %s: %s", row["store"], row["url"], exc)
                 stats["failed"] += 1

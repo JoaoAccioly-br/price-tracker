@@ -27,7 +27,6 @@ def main() -> None:
     p.add_argument("store")
     p.add_argument("url")
     p.add_argument("--selector", help="seletor CSS do preço (plano B)")
-    p.add_argument("--browser", action="store_true", help="usar Playwright")
 
     sub.add_parser("list")
     sub.add_parser("collect")
@@ -44,9 +43,9 @@ def main() -> None:
     elif args.cmd == "add-listing":
         with conn:
             cur = conn.execute(
-                "INSERT INTO listings (product_id, store, url, css_selector, use_browser) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (args.product_id, args.store, args.url, args.selector, int(args.browser)),
+                "INSERT INTO listings (product_id, store, url, css_selector) "
+                "VALUES (?, ?, ?, ?)",
+                (args.product_id, args.store, args.url, args.selector),
             )
         print(f"Link #{cur.lastrowid} criado.")
     elif args.cmd == "list":

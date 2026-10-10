@@ -4,6 +4,7 @@ Por padrão toda loja usa o scraper genérico (JSON-LD -> meta -> CSS).
 Se uma loja específica precisar de tratamento próprio, crie uma função
 `parse(html, css_selector) -> PriceResult` e registre o domínio abaixo.
 """
+import os
 import random
 import time
 from urllib.parse import urlparse
@@ -26,10 +27,20 @@ CUSTOM_HEADERS: dict = {
 }
 
 
-def scrape(url: str, css_selector: str | None = None, use_browser: bool = False,
+def scrape(url: str, css_selector: str | None = None,
            attempts: int = 3, retry_delay: tuple[float, float] = (3.0, 6.0)) -> PriceResult:
-    """Baixa e parseia. Se o preço não vier, tenta de novo."""
+    """Baixa e parseia. Se houver API integrada (ex.: Mercado Livre), usa prioritariamente."""
     netloc = urlparse(url).netloc
+
+    # 1. Suporte à API oficial do Mercado Livre
+    if "mercadolivre.com.br" in netloc:
+        ml_token = os.environ.get("MERCADOLIVRE_TOKEN", "").strip()
+        if ml_token:
+            api_res = mercadolivre.fetch_from_api(url, ml_token)
+            if api_res and api_res.price is not None:
+                return api_res
+
+    # 2. Scraping HTTP tradicional
     parser = CUSTOM_PARSERS.get(netloc, parse_html)
     headers = CUSTOM_HEADERS.get(netloc)
 
@@ -37,7 +48,7 @@ def scrape(url: str, css_selector: str | None = None, use_browser: bool = False,
     for i in range(attempts):
         if i:
             time.sleep(random.uniform(*retry_delay))
-        html = fetch_html(url, use_browser=use_browser, headers=headers)
+        html = fetch_html(url, headers=headers)
         result = parser(html, css_selector)
         if result.price is not None:
             break

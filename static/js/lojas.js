@@ -73,21 +73,37 @@ function renderLojasView() {
         </td>
         <td><b>${brl(effPrice)}</b></td>
         <td>
-          <span style="font-size:12px; color:var(--text-muted)">
-            <i class="fa-solid fa-code" style="margin-right:4px"></i>
-            ${l.use_browser ? 'Playwright (Navegador)' : 'HTTP Rápido'}
+          <span style="font-size:12px; color: ${l.available === 0 ? 'var(--accent-red)' : 'var(--text-muted)'}">
+            ${l.available === 0 ? '<i class="fa-solid fa-triangle-exclamation"></i> Indisponível' : '<i class="fa-solid fa-check"></i> Ativo'}
           </span>
         </td>
         <td style="color:var(--text-muted); font-size:12px">
           ${l.checked_at ? escapeHtml(l.checked_at.replace(/-/g, '/')) + ' UTC' : 'Pendente'}
         </td>
         <td>
-          <a href="${safeUrl(l.url)}" target="_blank" rel="noopener noreferrer" class="btn-outline" style="padding:4px 10px; font-size:12px; text-decoration:none">
-            Visitar <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:10px; margin-left:4px"></i>
-          </a>
+          <div style="display:flex; gap:6px; align-items:center">
+            <a href="${safeUrl(l.url)}" target="_blank" rel="noopener noreferrer" class="btn-outline" style="padding:4px 10px; font-size:12px; text-decoration:none">
+              Visitar <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:10px; margin-left:4px"></i>
+            </a>
+            <button onclick="handleDeleteListing(${l.id})" class="btn-outline" style="padding:4px 8px; font-size:12px; color:var(--accent-red); border-color:#fae9e9" title="Excluir link">
+              <i class="fa-solid fa-trash"></i>
+            </button>
+          </div>
         </td>
       </tr>
     `;
   }).join('');
+}
+
+async function handleDeleteListing(lid) {
+  if (!confirm('Deseja realmente excluir este link do rastreador?')) return;
+  try {
+    const res = await fetch(`/api/listings/${lid}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error((await res.json()).detail || 'Erro ao excluir link');
+    await load();
+    renderLojasView();
+  } catch (err) {
+    alert('Erro ao excluir link: ' + err.message);
+  }
 }
 
