@@ -48,6 +48,12 @@ CREATE TABLE IF NOT EXISTS prices (
 );
 CREATE INDEX IF NOT EXISTS idx_prices_listing_time ON prices (listing_id, checked_at);
 CREATE INDEX IF NOT EXISTS idx_listings_product ON listings (product_id, active);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 # Schema para PostgreSQL (compatível com Neon)
@@ -81,6 +87,12 @@ CREATE TABLE IF NOT EXISTS prices (
 );
 CREATE INDEX IF NOT EXISTS idx_prices_listing_time ON prices (listing_id, checked_at);
 CREATE INDEX IF NOT EXISTS idx_listings_product ON listings (product_id, active);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT (TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
+);
 """
 
 
@@ -232,3 +244,31 @@ def init_db() -> None:
         if "final_price" not in price_cols:
             conn.execute("ALTER TABLE prices ADD COLUMN final_price REAL")
     conn.close()
+
+
+def get_setting(key: str, default: str | None = None) -> str | None:
+    """Busca um valor de configuração persistente na tabela app_settings."""
+    conn = get_conn()
+    try:
+        cur = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
+        row = cur.fetchone()
+        if row:
+            return row["value"] if isinstance(row, dict) else row[0]
+        return default
+    finally:
+        conn.close()
+
+
+def set_setting(key: str, value: str) -> None:
+    """Salva ou atualiza um valor de configuração na tabela app_settings."""
+    conn = get_conn()
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, datetime('now')) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+                (key, value),
+            )
+    finally:
+        conn.close()
+

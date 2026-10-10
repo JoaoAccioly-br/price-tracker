@@ -8,6 +8,7 @@ Suporta:
 import logging
 import os
 import re
+import time
 from urllib.parse import urlparse
 
 import httpx
@@ -23,6 +24,110 @@ ML_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
 }
+
+
+def get_access_token() -> str | None:
+    """Obtém um access token válido para a API do Mercado Livre.
+
+    Ordem de prioridade:
+    1. Se MERCADOLIVRE_TOKEN (ou MERCADOLIVRE_ACCESS_TOKEN) estiver definido no ambiente, usa diretamente (modo manual).
+    2. Se MERCADOLIVRE_CLIENT_ID e MERCADOLIVRE_CLIENT_SECRET estiverem definidos:
+       - Verifica token salvo no banco (app_settings: ml_access_token e ml_token_expires_at).
+       - Se ainda for válido (com margem de segurança de 5 minutos), retorna-o.
+       - Se expirado ou ausente, renova automaticamente via refresh_token (do banco ou da env MERCADOLIVRE_REFRESH_TOKEN).
+    """
+    # 1. Modo manual via variável estática
+    env_token = (
+        os.environ.get("MERCADOLIVRE_TOKEN", "").strip()
+        or os.environ.get("MERCADOLIVRE_ACCESS_TOKEN", "").strip()
+    )
+    if env_token:
+        return env_token
+
+    # 2. Modo automático OAuth com refresh token
+    client_id = os.environ.get("MERCADOLIVRE_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("MERCADOLIVRE_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        return None
+
+    try:
+        from ..db import get_setting
+
+        token = get_setting("ml_access_token")
+        expires_at_str = get_setting("ml_token_expires_at")
+        if token and expires_at_str:
+            try:
+                expires_at = float(expires_at_str)
+                if time.time() < (expires_at - 300):
+                    return token
+            except ValueError:
+                pass
+    except Exception as exc:
+        log.warning("[ML-OAuth] Erro ao consultar token no banco: %s", exc)
+
+    return refresh_access_token()
+
+
+def refresh_access_token() -> str | None:
+    """Renova o token OAuth junto à API do Mercado Livre e persiste o novo par no banco de dados."""
+    client_id = os.environ.get("MERCADOLIVRE_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("MERCADOLIVRE_CLIENT_SECRET", "").strip()
+    initial_refresh = os.environ.get("MERCADOLIVRE_REFRESH_TOKEN", "").strip()
+
+    if not client_id or not client_secret:
+        log.warning("[ML-OAuth] MERCADOLIVRE_CLIENT_ID e MERCADOLIVRE_CLIENT_SECRET não configurados.")
+        return None
+
+    from ..db import get_setting, set_setting
+
+    refresh_token = get_setting("ml_refresh_token") or initial_refresh
+    if not refresh_token:
+        log.warning(
+            "[ML-OAuth] Nenhum refresh token disponível (configure MERCADOLIVRE_REFRESH_TOKEN no ambiente)."
+        )
+        return None
+
+    log.info("[ML-OAuth] Solicitando renovação do Access Token na API do Mercado Livre...")
+    oauth_url = "https://api.mercadolibre.com/oauth/token"
+    payload = {
+        "grant_type": "refresh_token",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": refresh_token,
+    }
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json",
+    }
+    try:
+        r = httpx.post(oauth_url, data=payload, headers=headers, timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            new_access_token = data.get("access_token")
+            new_refresh_token = data.get("refresh_token")
+            expires_in = data.get("expires_in", 21600)
+            new_expires_at = time.time() + float(expires_in)
+
+            if new_access_token:
+                set_setting("ml_access_token", new_access_token)
+                set_setting("ml_token_expires_at", str(new_expires_at))
+                if new_refresh_token:
+                    set_setting("ml_refresh_token", new_refresh_token)
+                log.info(
+                    "[ML-OAuth] Token renovado com sucesso! Válido por %.1f horas.",
+                    float(expires_in) / 3600,
+                )
+                return new_access_token
+        else:
+            log.warning(
+                "[ML-OAuth] Falha ao renovar token (HTTP %s): %s",
+                r.status_code,
+                r.text[:300],
+            )
+    except Exception as exc:
+        log.warning("[ML-OAuth] Exceção de rede ao renovar token: %s", exc)
+    return None
+
 
 
 def extract_mlb_id(url: str) -> str | None:
@@ -84,9 +189,14 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
                     )
             elif r.status_code == 401:
                 log.warning(
-                    "[ML-API] HTTP 401 Unauthorized: token inválido ou expirado. "
-                    "Verifique se MERCADOLIVRE_TOKEN é um Access Token válido (Bearer), não apenas o Client ID."
+                    "[ML-API] HTTP 401 Unauthorized: token inválido ou expirado."
                 )
+                try:
+                    from ..db import set_setting
+
+                    set_setting("ml_token_expires_at", "0")
+                except Exception:
+                    pass
                 break
             elif r.status_code == 403:
                 log.warning("[ML-API] HTTP 403 Forbidden para %s.", api_url)

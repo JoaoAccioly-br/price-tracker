@@ -1,129 +1,99 @@
 # Price Tracker — Resumo do projeto (para agentes)
 
-Rastreador pessoal de preços de notebooks em lojas online. Faz scraping das páginas
-de produto, guarda o histórico em SQLite e exibe tudo numa página web com gráfico.
+Rastreador de preços de produtos e periféricos em e-commerces (Mercado Livre, Amazon, Kabum, Lenovo, etc.). Faz scraping HTTP e consultas via API oficial (Mercado Livre), armazena leituras em banco de dados híbrido (PostgreSQL Neon na nuvem / SQLite local) e exibe uma interface web responsiva em vanilla JS SPA com gráficos históricos e alertas.
 
 ```
-cron / botão na UI → collector → scrapers → SQLite (data/tracker.db) → FastAPI → static/index.html
+cron / botão na UI → collector → scrapers / API ML → DB (Neon / SQLite) → FastAPI → SPA (static/index.html)
 ```
 
 ## Stack
-- Python 3.10+ (usa `float | None`; o `.venv` local é 3.12)
-- FastAPI + Uvicorn (API e servidor do frontend estático)
-- httpx + BeautifulSoup4 (download e parsing de HTML)
-- Playwright (opcional, para sites que renderizam preço via JS)
-- SQLite (stdlib `sqlite3`, sem ORM)
-- Frontend: HTML/JS puro + Chart.js via CDN
-- Testes: pytest + `fastapi.testclient`
+- **Backend**: Python 3.12, FastAPI + Uvicorn, httpx + BeautifulSoup4
+- **Banco de Dados Híbrido**: 
+  - PostgreSQL (Neon) em produção via `psycopg` (v3) quando `DATABASE_URL` estiver definida.
+  - SQLite (`data/tracker.db`) para desenvolvimento local/testes unitários.
+  - Sem ORM pesado: camada de abstração em `app/db.py` com compatibilidade de cursores (`Row`/`dict`), transações e migrations automáticas.
+- **Scraping & Coleta**:
+  - 100% HTTP/JSON assíncrono e leve. **Playwright e navegadores headless foram totalmente removidos** para economizar memória RAM e rodar com folga no plano gratuito do Render (512MB RAM).
+  - API oficial do Mercado Livre com suporte a OAuth2 e renovação automática de token.
+- **Frontend**: Single-Page Application (SPA) em HTML5/Vanilla JS modular, CSS centralizado (paleta D·Rosa), Chart.js (CDN) e Font Awesome 6.5.2 (CDN).
+- **Segurança**:
+  - Sanitização rigorosa contra XSS com `static/js/utils.js` (`escapeHtml` e `safeUrl`).
+  - Imagem Docker rodando sob usuário não-privilegiado `app (UID 10001)`.
+  - Autenticação HTTP Basic opcional via `APP_USERNAME` e `APP_PASSWORD`.
+- **CI/CD & Deploy**:
+  - GitHub Actions (`.github/workflows/deploy.yml`): testes automatizados, build multi-stage Docker para GHCR, trigger de deploy no Render via webhook.
+  - Dependabot (`.github/dependabot.yml`): atualizações automáticas semanais para pip, docker e actions.
 
-## Estrutura
+---
+
+## Estrutura do Projeto
 | Caminho | Papel |
 |---|---|
-| `app/db.py` | `DB_PATH` (`data/tracker.db`), `SCHEMA`, `get_conn()` (row_factory=Row, FKs on), `init_db()` |
-| `app/scrapers/base.py` | `PriceResult`, `parse_brl()`, `parse_html()`, `fetch_html()`, `_fetch_with_browser()` |
-| `app/scrapers/__init__.py` | `scrape()` público (com retry: até 3 tentativas se o preço vier `None`) + registro `CUSTOM_PARSERS` (domínio → parser) |
-| `app/scrapers/amazon.py` | Parser da Amazon (sem JSON-LD): preço "a pagar" em `#corePrice_feature_div .apex-pricetopay-value .a-offscreen`, fallbacks whole+fraction e inputs escondidos; detecta a variante sem preço ("adicione este item ao seu carrinho") → `source="amazon:price-hidden"` |
-| `app/collector.py` | `collect_all()` — percorre listings ativos, raspa, grava preço, loga alerta |
-| `app/cli.py` | CLI: `add-product`, `add-listing`, `list`, `collect` |
-| `app/main.py` | API FastAPI + mount do `static/` em `/` |
-| `static/index.html` | UI single-page (lista produtos, formulários, gráfico de histórico). O gráfico fica num wrapper `.chart` que é escondido (Chart.js força `display:block` no canvas, anulando `hidden`) |
-| `tests/test_parser.py` | Testes de `parse_brl` e das 3 estratégias de parsing |
-| `tests/test_amazon.py` | Testes do parser da Amazon |
-| `tests/test_api.py` | Fluxo da API com banco temporário (monkeypatch em `db.DB_PATH`) |
+| `app/db.py` | Camada de conexão híbrida (Neon PostgreSQL ou SQLite local), schemas DDL, cursores, transações e tabela `app_settings` com `get_setting` / `set_setting`. |
+| `app/migrate_to_neon.py` | Script utilitário para migrar dados históricos do SQLite local para o PostgreSQL na Neon. |
+| `app/scrapers/base.py` | `PriceResult`, `parse_brl()`, `parse_html()`, `fetch_html()` (sem dependência de navegador). |
+| `app/scrapers/__init__.py` | Roteador de scrapers: prioriza API oficial para Mercado Livre com `get_access_token()`, seguido de scrapers específicos (`CUSTOM_PARSERS`) e genérico com retry. |
+| `app/scrapers/amazon.py` | Parser específico para páginas da Amazon (lida com blocos dinâmicos e preços ocultos). |
+| `app/scrapers/mercadolivre.py` | Integração híbrida ML: consulta endpoints `/products/{MLB_ID}` (catálogo com `buy_box_winner.price`) e `/items/{MLB_ID}`, gerenciamento de OAuth2 e renovação automática de tokens via `refresh_token`, e fallback para HTML. |
+| `app/collector.py` | `collect_all()` — itera pelos links ativos, coleta preços, persiste na tabela `prices`, atualiza progresso SSE e dispara alertas. |
+| `app/main.py` | Rotas FastAPI: CRUD de produtos e listings (inclui exclusão `DELETE`), disparo de coleta, status e SSE em tempo real (`/api/collect/events`), e mount de arquivos estáticos. |
+| `app/cli.py` | Interface de linha de comando para gerenciar produtos, listings e disparar coleta. |
+| `static/` | Frontend modular: `index.html`, `js/router.js`, `js/utils.js` (XSS helpers), controladores (`produtos.js`, `painel.js`, `lojas.js`, `alertas.js`, `historico.js`, `cadastro.js`) e templates em `views/*.html`. |
+| `Dockerfile` | Multi-stage build com base `python:3.12-slim-bookworm`, sem root, healthcheck nativo com `urllib.request`. |
+| `.github/workflows/deploy.yml` | Pipeline de CI/CD para GitHub Packages (GHCR) e Render. |
 
-## Modelo de dados (SQLite)
-- **products**: `id`, `name`, `target_price` (preço alvo p/ alerta, opcional)
-- **listings**: um produto numa loja (uma URL). `product_id`, `store`, `url`,
-  `css_selector` (fallback), `use_browser` (0/1), `active` (0/1). `UNIQUE(product_id, url)`
-- **prices**: histórico, uma linha por leitura. `listing_id`, `price`, `available`,
-  `coupon_code` (código do cupom ativo detectado, ex: 'NOTE10'), `final_price` (preço com cupom aplicado),
-  `checked_at` (default `datetime('now')` → **UTC**). Índice em `(listing_id, checked_at)`
+---
 
-## Fluxo de coleta (`collect_all`)
-1. `init_db()` e busca todos os listings `active = 1` com nome/alvo do produto.
-2. Para cada um (com `sleep` aleatório de 3–8 s entre requisições):
-   - `scrapers.scrape(url, css_selector, use_browser)`:
-     - `fetch_html` → httpx (UA de Chrome, `Accept-Language: pt-BR`) ou Playwright.
-     - Escolhe parser por `urlparse(url).netloc` em `CUSTOM_PARSERS`, senão `parse_html`.
-   - Exceção ou preço `None` → `failed += 1`, loga warning e segue.
-   - Sucesso → `INSERT INTO prices`, `ok += 1`.
-   - Se `target_price` e disponível e `price <= target` → `log.warning("ALERTA ...")`
-     (**ponto de extensão** para Telegram/e-mail).
-3. Retorna `{"ok": n, "failed": m}`.
+## Modelo de Dados
+- **products**: `id`, `name`, `category` (ex.: Notebook, Periférico), `target_price`.
+- **listings**: `id`, `product_id`, `store`, `url`, `css_selector`, `use_browser` (descontinuado), `active`. `UNIQUE(product_id, url)`. Exclusão em cascata configurada.
+- **prices**: histórico de leituras. `id`, `listing_id`, `price`, `available`, `coupon_code`, `final_price`, `checked_at` (UTC). Índice em `(listing_id, checked_at)`.
+- **app_settings**: chave-valor persistente para parâmetros do sistema e tokens (`key`, `value`, `updated_at`). Usado para guardar `ml_access_token`, `ml_token_expires_at` e `ml_refresh_token`.
 
-## Estratégia de parsing (`parse_html`)
-1. **JSON-LD** (`<script type="application/ld+json">`): percorre recursivamente
-   (suporta `@graph`, listas, `@type` como lista), acha `Product` com `offers`;
-   pega o **menor** `price`/`lowPrice`/`priceSpecification.price`;
-   disponível = alguma oferta sem `OutOfStock`. `source="json-ld"`.
-2. **Meta/itemprop**: `product:price:amount`, `og:price:amount`, `itemprop="price"`
-   (em `<meta>` ou `<span>`). `source="meta"`, sempre `available=True`.
-3. **Seletor CSS** do listing (se cadastrado). `source="css:<sel>"`.
-4. Nada encontrado → `PriceResult(None, False, None, "not-found")`.
+---
 
-`parse_brl` normaliza `"R$ 3.499,90"`, `"3499.90"`, `"3.499"` (ponto + 3 dígitos = milhar),
-`"1.299,00"`, números puros; retorna `None` se não houver dígitos.
+## Integração Oficial do Mercado Livre (OAuth2 & Auto-Refresh)
+A API do Mercado Livre bloqueia IPs de datacenter em requisições de scraping convencionais e exige autenticação Bearer para endpoints de catálogo e itens. O token de acesso (`access_token`) expira a cada 6 horas.
 
-## API (`app/main.py`)
+### Fluxo de Renovação Automática
+1. No Render ou `.env`, são configuradas as credenciais:
+   - `MERCADOLIVRE_CLIENT_ID`
+   - `MERCADOLIVRE_CLIENT_SECRET`
+   - `MERCADOLIVRE_REFRESH_TOKEN` (refresh token inicial)
+2. Durante a coleta, `mercadolivre.get_access_token()`:
+   - Verifica se há token válido e não-expirado salvo no banco (`app_settings`).
+   - Se estiver expirado ou a 5 minutos de expirar, chama `POST https://api.mercadolibre.com/oauth/token` com `grant_type=refresh_token`.
+   - Salva o novo `access_token` e o novo `refresh_token` rotacionado no banco de dados Neon.
+   - Caso receba `401 Unauthorized` durante uma requisição, invalida o cache do banco automaticamente.
+3. Se for fornecido apenas `MERCADOLIVRE_TOKEN` manual, este é usado diretamente.
+4. Suporta URLs tanto de catálogo (`/p/MLB...` via `/products/{id}`) quanto de anúncios individuais (`/items/{id}`).
+
+---
+
+## API REST (`app/main.py`)
 | Método | Rota | Descrição |
 |---|---|---|
-| GET | `/api/products` | Produtos (ordem por nome) + listings ativos com último preço/disponibilidade/data + `best_price` (menor entre disponíveis) |
-| GET | `/api/products/{id}/history` | Todas as leituras (`store, price, available, checked_at`) ordenadas por data |
-| POST | `/api/products` | `{name, target_price?}` → 201 `{id}` |
-| POST | `/api/listings` | `{product_id, store, url, css_selector?, use_browser?}` → 201 `{id}`; 404 se produto não existe; 409 se duplicado |
-| POST | `/api/collect` | Dispara `collect_all` em `BackgroundTasks` → 202 |
-| GET | `/api/collect/status` | Retorna estado da coleta (`running`, `current`, `total`, `stats`, `last_run`) |
-| GET | `/api/collect/events` | Stream de Server-Sent Events (SSE) para notificações em tempo real (`start`, `progress`, `done`) |
-| GET | `/` | `static/index.html` (mount `StaticFiles` — **deve ficar por último**) |
+| GET | `/api/products` | Lista produtos com listings e melhor preço atual |
+| POST | `/api/products` | Cria novo produto |
+| DELETE | `/api/products/{id}` | Remove produto e todos os links/preços associados |
+| POST | `/api/listings` | Adiciona link a um produto |
+| DELETE | `/api/listings/{id}` | Remove um link específico |
+| GET | `/api/products/{id}/history` | Histórico cronológico de leituras do produto |
+| POST | `/api/collect` | Dispara coleta assíncrona de preços |
+| GET | `/api/collect/status` | Retorna status da coleta em andamento |
+| GET | `/api/collect/events` | Stream SSE com progresso da coleta para a UI |
 
-## Frontend (`static/`) - Arquitetura Modular
-- **Roteamento SPA limpo**: [`static/js/router.js`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/js/router.js) gerencia navegação e hash (`#painel`, `#produtos`, `#cadastro`) carregando assincronamente os templates sob demanda.
-- **Telas separadas em HTML**:
-  - [`static/views/painel.html`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/views/painel.html): Cards de estatísticas e tabela geral de melhores preços.
-  - [`static/views/produtos.html`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/views/produtos.html): Layout em duas colunas (lista lateral e detalhes comparativos com gráfico).
-  - [`static/views/cadastro.html`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/views/cadastro.html): Tela de Adicionar Produto / Link.
-  - [`static/views/alertas.html`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/views/alertas.html): Monitoramento de metas e alertas de preço atingidos.
-  - [`static/views/historico.html`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/views/historico.html): Linha do tempo completa das leituras de preços.
-  - [`static/views/lojas.html`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/views/lojas.html): Resumo e listagem dos e-commerces e links cadastrados.
-- **Módulos JS separados**:
-  - [`static/js/painel.js`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/js/painel.js), [`static/js/produtos.js`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/js/produtos.js), [`static/js/cadastro.js`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/js/cadastro.js), [`static/js/alertas.js`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/js/alertas.js), [`static/js/historico.js`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/js/historico.js), [`static/js/lojas.js`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/js/lojas.js) e controlador [`static/js/app.js`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/js/app.js).
-- **CSS centralizado**: [`static/css/style.css`](file:///home/joao-accioly/Documents/GitHub/price-tracker/static/css/style.css) com variáveis, paleta D·Rosa e responsividade.
-- **Ícones**: 100% integrados via **Font Awesome 6.5.2** (CDN oficial).
-- **Atualização em tempo real**: SSE (`/api/collect/events`) com status no botão e recarregamento automático da UI.
+---
 
-## Como rodar
+## Execução e Testes
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-playwright install chromium        # só se for usar --browser
+# Ambiente virtual
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
 
-python -m app.cli add-product "Acer Nitro V15" --target 4500
-python -m app.cli add-listing 1 kabum "https://www.kabum.com.br/produto/..."
-python -m app.cli add-listing 1 amazon "https://..." --selector "span.preco"   # fallback CSS
-python -m app.cli add-listing 1 loja "https://..." --browser                    # Playwright
-python -m app.cli list
-python -m app.cli collect
+# Inicializar banco e rodar testes (25 testes)
+pytest -v
 
-uvicorn app.main:app --reload      # http://localhost:8000
-pytest                             # 19 testes, todos passando
+# Rodar servidor de desenvolvimento
+uvicorn app.main:app --reload --port 8000
 ```
-Agendamento: `0 */8 * * * cd /caminho/price-tracker && .venv/bin/python -m app.cli collect`
-
-## Convenções / como estender
-- Parser específico de loja: criar `app/scrapers/<loja>.py` com
-  `parse(html, css_selector) -> PriceResult` e registrar em `CUSTOM_PARSERS["www.loja.com.br"]`
-  (chave = netloc exato, com `www.`).
-- Toda função abre/fecha sua própria conexão via `get_conn()`; escrita dentro de `with conn:`.
-- Testes de API trocam o banco com `monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")`.
-- Código, comentários e mensagens em português.
-
-## Observações / pontos de atenção conhecidos
-- `.gitignore` só ignora `.venv` — `data/` (banco) e `__pycache__/` podem acabar commitados.
-- `app/scrapers/base.py` tem um `scrape()` próprio que **não** consulta `CUSTOM_PARSERS`;
-  o correto é usar `app.scrapers.scrape`.
-- `create_listing` converte qualquer exceção em 409 (não só `IntegrityError`).
-- Frontend usa `innerHTML` com dados do usuário (nome, loja, URL) sem escapar → risco de XSS.
-- Não há endpoints/CLI para editar, desativar (`active`) ou apagar produtos/listings.
-- Alertas apenas no log; `checked_at` é UTC (a UI indica isso).
-- `playwright` está no `requirements.txt` mas os binários do navegador exigem `playwright install`.
-

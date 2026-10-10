@@ -49,3 +49,36 @@ def test_fetch_from_api_item(mock_get):
     assert res.price == 99.50
     assert res.available is True
 
+
+@patch("httpx.post")
+def test_refresh_access_token(mock_post, monkeypatch, tmp_path):
+    from app import db
+
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test_oauth.db")
+    db.init_db()
+
+    monkeypatch.setenv("MERCADOLIVRE_CLIENT_ID", "dummy_client")
+    monkeypatch.setenv("MERCADOLIVRE_CLIENT_SECRET", "dummy_secret")
+    monkeypatch.setenv("MERCADOLIVRE_REFRESH_TOKEN", "dummy_refresh")
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "access_token": "new_app_usr_token",
+        "refresh_token": "new_refresh_token_rotated",
+        "expires_in": 21600,
+    }
+    mock_post.return_value = mock_resp
+
+    token = mercadolivre.refresh_access_token()
+    assert token == "new_app_usr_token"
+    assert db.get_setting("ml_access_token") == "new_app_usr_token"
+    assert db.get_setting("ml_refresh_token") == "new_refresh_token_rotated"
+
+    # Segunda chamada com token ainda válido não deve chamar httpx.post novamente
+    mock_post.reset_mock()
+    token_cached = mercadolivre.get_access_token()
+    assert token_cached == "new_app_usr_token"
+    mock_post.assert_not_called()
+
+
