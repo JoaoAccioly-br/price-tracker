@@ -48,6 +48,11 @@ def get_access_token() -> str | None:
     client_id = os.environ.get("MERCADOLIVRE_CLIENT_ID", "").strip()
     client_secret = os.environ.get("MERCADOLIVRE_CLIENT_SECRET", "").strip()
     if not client_id or not client_secret:
+        log.warning(
+            "[ML-OAuth] Credenciais incompletas no Render: MERCADOLIVRE_CLIENT_ID=%s, MERCADOLIVRE_CLIENT_SECRET=%s",
+            "CONFIGURADO" if client_id else "AUSENTE",
+            "CONFIGURADO" if client_secret else "AUSENTE",
+        )
         return None
 
     try:
@@ -164,8 +169,9 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
     for api_url in endpoints:
         try:
             endpoint_type = "catálogo/produto" if "products" in api_url else "item"
-            log.info("[ML-API] Consultando API oficial (%s) para %s...", endpoint_type, mlb_id)
+            log.warning("[ML-API] Consultando API oficial (%s) para %s...", endpoint_type, mlb_id)
             r = httpx.get(api_url, headers=headers, timeout=10)
+            log.warning("[ML-API] Resposta HTTP %s em %s", r.status_code, api_url)
             if r.status_code == 200:
                 data = r.json()
                 price = None
@@ -183,7 +189,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
                     available = data.get("status") == "active" and (data.get("available_quantity", 0) > 0)
 
                 if price is not None:
-                    log.info("[ML-API] Sucesso! Preço obtido via API: R$ %.2f", price)
+                    log.warning("[ML-API] Sucesso! Preço obtido via API: R$ %.2f", price)
                     return PriceResult(
                         price=price,
                         available=available,
@@ -191,6 +197,8 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
                         source="ml:api-oficial",
                         final_price=price,
                     )
+                else:
+                    log.warning("[ML-API] Resposta HTTP 200 recebida, mas preço não encontrado no JSON: %s", list(data.keys()))
             elif r.status_code == 401:
                 log.warning(
                     "[ML-API] HTTP 401 Unauthorized: token inválido ou expirado."
@@ -205,6 +213,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
             elif r.status_code == 403:
                 log.warning("[ML-API] HTTP 403 Forbidden para %s.", api_url)
             elif r.status_code == 404:
+                log.warning("[ML-API] HTTP 404 Not Found para %s (tentando próximo endpoint se houver)...", api_url)
                 continue
             else:
                 log.warning("[ML-API] Resposta HTTP %s em %s: %s", r.status_code, api_url, r.text[:200])
