@@ -6,6 +6,12 @@ def test_extract_mlb_id():
     url_catalog = "https://www.mercadolivre.com.br/mouse-delux-m900-pro-paw3395-70h-bateria-8k-com-dock-preto/p/MLB38199035"
     assert mercadolivre.extract_mlb_id(url_catalog) == "MLB38199035"
 
+    url_up = "https://www.mercadolivre.com.br/mouse-gamer-attack-shark-x11/up/MLBU3269725495"
+    assert mercadolivre.extract_mlb_id(url_up) == "MLB3269725495"
+
+    url_filters = "https://www.mercadolivre.com.br/mouse-gamer/up/MLBU3269725495?pdp_filters=item_id:MLB5474859082"
+    assert mercadolivre.extract_mlb_id(url_filters) == "MLB3269725495"
+
     url_item = "https://produto.mercadolivre.com.br/MLB-123456789-mouse-gamer.html"
     assert mercadolivre.extract_mlb_id(url_item) == "MLB123456789"
 

@@ -140,11 +140,27 @@ def refresh_access_token() -> str | None:
 
 
 def extract_mlb_id(url: str) -> str | None:
-    """Extrai o código do item MLB (ex.: MLB38199035 ou MLB-38199035) da URL."""
-    # Procura padrões como /MLB12345678, /MLB-12345678 ou /p/MLB12345678
+    """Extrai o código do item MLB ou catálogo da URL (ex.: MLB38199035, MLBU3269725495 ou item_id:MLB...)."""
+    # 1. Procura catálogo /up/MLBU... ou /p/MLB... (prioridade: catálogo é mais estável e tem buy_box_winner)
+    m_up = re.search(r"/(?:up/|p/)(MLBU?-?\d{6,14})", url, re.IGNORECASE)
+    if m_up:
+        raw_id = m_up.group(1).replace("-", "").upper()
+        if raw_id.startswith("MLBU"):
+            return "MLB" + raw_id[4:]
+        return raw_id
+
+    # 2. Procura item_id específico em query string se houver (ex.: pdp_filters=item_id:MLB5474859082)
+    m_item = re.search(r"item_id:(MLB-?\d{6,14})", url, re.IGNORECASE)
+    if m_item:
+        return m_item.group(1).replace("-", "").upper()
+
+    # 3. Padrão geral MLB...
     m = re.search(r"(MLB-?\d{6,14})", url, re.IGNORECASE)
     if m:
-        return m.group(1).replace("-", "").upper()
+        raw_id = m.group(1).replace("-", "").upper()
+        if raw_id.startswith("MLBU"):
+            return "MLB" + raw_id[4:]
+        return raw_id
     return None
 
 
@@ -155,7 +171,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
         log.warning("[ML-API] Não foi possível extrair o código MLB da URL: %s", url)
         return None
 
-    is_catalog = "/p/" in url
+    is_catalog = "/p/" in url or "/up/" in url
     endpoints = (
         [
             f"https://api.mercadolibre.com/products/{mlb_id}",

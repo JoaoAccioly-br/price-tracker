@@ -9,8 +9,25 @@ import random
 import time
 from urllib.parse import urlparse
 
-from . import amazon, mercadolivre
+from . import aliexpress, amazon, mercadolivre
 from .base import PriceResult, fetch_html, parse_html
+
+KABUM_HEADERS: dict = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Sec-Ch-Ua": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+}
 
 CUSTOM_PARSERS: dict = {
     "www.amazon.com.br": amazon.parse,
@@ -18,12 +35,18 @@ CUSTOM_PARSERS: dict = {
     "www.mercadolivre.com.br": mercadolivre.parse,
     "mercadolivre.com.br": mercadolivre.parse,
     "produto.mercadolivre.com.br": mercadolivre.parse,
+    "pt.aliexpress.com": aliexpress.parse,
+    "www.aliexpress.com": aliexpress.parse,
+    "aliexpress.com": aliexpress.parse,
+    "m.aliexpress.com": aliexpress.parse,
 }
 
 CUSTOM_HEADERS: dict = {
     "www.mercadolivre.com.br": mercadolivre.ML_HEADERS,
     "mercadolivre.com.br": mercadolivre.ML_HEADERS,
     "produto.mercadolivre.com.br": mercadolivre.ML_HEADERS,
+    "www.kabum.com.br": KABUM_HEADERS,
+    "kabum.com.br": KABUM_HEADERS,
 }
 
 
@@ -56,7 +79,10 @@ def scrape(url: str, css_selector: str | None = None,
         if i:
             time.sleep(random.uniform(*retry_delay))
         html = fetch_html(url, headers=headers)
-        result = parser(html, css_selector)
+        if "aliexpress.com" in netloc:
+            result = parser(html, css_selector, url=url)
+        else:
+            result = parser(html, css_selector)
         if result.price is not None:
             break
     return result

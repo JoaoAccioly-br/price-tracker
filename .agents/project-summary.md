@@ -34,6 +34,7 @@ cron / botão na UI → collector → scrapers / API ML → DB (Neon / SQLite) �
 | `app/scrapers/base.py` | `PriceResult`, `parse_brl()`, `parse_html()`, `fetch_html()` (sem dependência de navegador). |
 | `app/scrapers/__init__.py` | Roteador de scrapers: prioriza API oficial para Mercado Livre com `get_access_token()`, seguido de scrapers específicos (`CUSTOM_PARSERS`) e genérico com retry. |
 | `app/scrapers/amazon.py` | Parser específico para páginas da Amazon (lida com blocos dinâmicos e preços ocultos). |
+| `app/scrapers/aliexpress.py` | Parser específico para AliExpress: extração de preço e desconto via parâmetro `pdp_npi` da URL e título via `og:title`. |
 | `app/scrapers/mercadolivre.py` | Integração híbrida ML: consulta endpoints `/products/{MLB_ID}` (catálogo com `buy_box_winner.price`) e `/items/{MLB_ID}`, gerenciamento de OAuth2 e renovação automática de tokens via `refresh_token`, e fallback para HTML. |
 | `app/collector.py` | `collect_all()` — itera pelos links ativos, coleta preços, persiste na tabela `prices`, atualiza progresso SSE e despacha alertas com deduplicação. |
 | `app/notifier.py` | Módulo de notificações: e-mail gratuito via SMTP (Gmail App Password) e Telegram Bot, com suporte a múltiplos destinatários, deduplicação e cooldown. |
