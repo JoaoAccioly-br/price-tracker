@@ -139,208 +139,270 @@ def refresh_access_token() -> str | None:
 
 
 
+def extract_candidate_ids(url: str) -> list[str]:
+    """Extrai todos os identificadores MLB possíveis da URL (catálogo, item_id, path)."""
+    ids: list[str] = []
+
+    def _add(raw: str):
+        cleaned = raw.replace("-", "").strip().upper()
+        # Se for MLBU..., adiciona a versão normalizada MLB... e a original
+        if cleaned.startswith("MLBU"):
+            alt = "MLB" + cleaned[4:]
+            if alt not in ids:
+                ids.append(alt)
+        if cleaned and cleaned not in ids:
+            ids.append(cleaned)
+
+    # 1. Catálogo /up/MLBU... ou /p/MLB...
+    for m in re.finditer(r"/(?:up/|p/)(MLBU?-?\d{6,14})", url, re.IGNORECASE):
+        _add(m.group(1))
+
+    # 2. Parâmetros de consulta (ex.: item_id:MLB5474859082 ou item_id=MLB5474859082)
+    for m in re.finditer(r"item_id[:=](MLBU?-?\d{6,14})", url, re.IGNORECASE):
+        _add(m.group(1))
+
+    # 3. Path geral /MLB-123456... ou /MLB123456...
+    for m in re.finditer(r"(MLB-?\d{6,14})", url, re.IGNORECASE):
+        _add(m.group(1))
+
+    return ids
+
+
 def extract_mlb_id(url: str) -> str | None:
-    """Extrai o código do item MLB ou catálogo da URL (ex.: MLB38199035, MLBU3269725495 ou item_id:MLB...)."""
-    # 1. Procura catálogo /up/MLBU... ou /p/MLB... (prioridade: catálogo é mais estável e tem buy_box_winner)
-    m_up = re.search(r"/(?:up/|p/)(MLBU?-?\d{6,14})", url, re.IGNORECASE)
-    if m_up:
-        raw_id = m_up.group(1).replace("-", "").upper()
-        if raw_id.startswith("MLBU"):
-            return "MLB" + raw_id[4:]
-        return raw_id
-
-    # 2. Procura item_id específico em query string se houver (ex.: pdp_filters=item_id:MLB5474859082)
-    m_item = re.search(r"item_id:(MLB-?\d{6,14})", url, re.IGNORECASE)
-    if m_item:
-        return m_item.group(1).replace("-", "").upper()
-
-    # 3. Padrão geral MLB...
-    m = re.search(r"(MLB-?\d{6,14})", url, re.IGNORECASE)
-    if m:
-        raw_id = m.group(1).replace("-", "").upper()
-        if raw_id.startswith("MLBU"):
-            return "MLB" + raw_id[4:]
-        return raw_id
-    return None
+    """Extrai o código principal do item MLB ou catálogo da URL."""
+    cids = extract_candidate_ids(url)
+    return cids[0] if cids else None
 
 
-def fetch_from_api(url: str, token: str) -> PriceResult | None:
-    """Consulta a API oficial do Mercado Livre usando o token configurado."""
-    mlb_id = extract_mlb_id(url)
-    if not mlb_id:
-        log.warning("[ML-API] Não foi possível extrair o código MLB da URL: %s", url)
-        return None
-
-    is_catalog = "/p/" in url or "/up/" in url
-    endpoints = (
-        [
-            f"https://api.mercadolibre.com/products/{mlb_id}",
-            f"https://api.mercadolibre.com/products/{mlb_id}/items",
-            f"https://api.mercadolibre.com/items/{mlb_id}",
-        ]
-        if is_catalog
-        else [
-            f"https://api.mercadolibre.com/items/{mlb_id}",
-            f"https://api.mercadolibre.com/products/{mlb_id}",
-            f"https://api.mercadolibre.com/products/{mlb_id}/items",
-        ]
-    )
+def fetch_from_api(url: str, token: str) -> PriceResult:
+    """Consulta a API oficial do Mercado Livre usando os identificadores extraídos da URL."""
+    candidate_ids = extract_candidate_ids(url)
+    if not candidate_ids:
+        log.warning("[ML-API] Não foi possível extrair nenhum código MLB da URL: %s", url)
+        return PriceResult(price=None, available=False, source="ml:id-invalido")
 
     headers = {
         "Authorization": f"Bearer {token.strip()}",
         "Accept": "application/json",
     }
-    for api_url in endpoints:
-        try:
-            r = httpx.get(api_url, headers=headers, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                price = None
-                available = True
-                name = (
-                    data.get("title") or data.get("name")
-                    if isinstance(data, dict)
-                    else None
-                )
+    last_status: int | None = None
 
-                # 1. Caso a resposta contenha uma lista de ofertas (ex.: /items ou busca por catalog_product_id)
-                results_list = None
-                if isinstance(data, list):
-                    results_list = data
-                elif isinstance(data, dict) and "results" in data and isinstance(data["results"], list):
-                    results_list = data["results"]
+    for cid in candidate_ids:
+        is_catalog = "/p/" in url or "/up/" in url or cid.startswith("MLBU")
+        endpoints = (
+            [
+                f"https://api.mercadolibre.com/products/{cid}",
+                f"https://api.mercadolibre.com/products/{cid}/items",
+                f"https://api.mercadolibre.com/items?ids={cid}",
+                f"https://api.mercadolibre.com/items/{cid}",
+            ]
+            if is_catalog
+            else [
+                f"https://api.mercadolibre.com/items?ids={cid}",
+                f"https://api.mercadolibre.com/items/{cid}",
+                f"https://api.mercadolibre.com/products/{cid}",
+                f"https://api.mercadolibre.com/products/{cid}/items",
+            ]
+        )
 
-                if results_list:
-                    for item in results_list:
-                        item_price = item.get("price")
-                        if item_price is not None:
-                            price = float(item_price)
-                            available = item.get("status") == "active" or (item.get("available_quantity", 0) > 0)
-                            name = item.get("title") or name
-                            break
+        for api_url in endpoints:
+            try:
+                r = httpx.get(api_url, headers=headers, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    price = None
+                    available = True
+                    name = None
 
-                # 2. Objeto de produto do catálogo
-                if price is None and isinstance(data, dict):
-                    bb = data.get("buy_box_winner")
+                    # A) Resposta multiget: /items?ids=... -> [{"code": 200, "body": {...}}]
+                    if isinstance(data, list) and data and isinstance(data[0], dict) and "body" in data[0]:
+                        entry = data[0]
+                        if entry.get("code") == 200:
+                            body = entry.get("body", {})
+                            if body.get("price") is not None:
+                                price = float(body["price"])
+                                available = body.get("status", "active") == "active" and (
+                                    body.get("available_quantity", 1) > 0
+                                )
+                                name = body.get("title") or body.get("name")
+                                log.info(
+                                    "[ML-API] Preço R$ %.2f obtido via multiget items (%s)",
+                                    price,
+                                    api_url,
+                                )
+                                return PriceResult(
+                                    price=price,
+                                    available=available,
+                                    name=name,
+                                    source="ml:api-oficial",
+                                    final_price=price,
+                                )
+                        elif entry.get("code") in (401, 403, 404):
+                            last_status = entry.get("code")
+                            continue
 
-                    # Se buy_box_winner tiver o preço diretamente
-                    if isinstance(bb, dict):
-                        if bb.get("price") is not None:
-                            price = float(bb["price"])
-                        if "status" in bb:
-                            available = bb.get("status") == "active"
+                    # B) Lista de ofertas (ex.: /products/{id}/items)
+                    results_list = None
+                    if isinstance(data, list):
+                        results_list = data
+                    elif isinstance(data, dict) and "results" in data and isinstance(data["results"], list):
+                        results_list = data["results"]
 
-                        winner_item_id = bb.get("item_id") or bb.get("id")
-                        if price is None and winner_item_id:
+                    if results_list:
+                        for item in results_list:
+                            item_price = item.get("price")
+                            if item_price is not None:
+                                price = float(item_price)
+                                available = item.get("status") == "active" or (
+                                    item.get("available_quantity", 0) > 0
+                                )
+                                name = item.get("title") or name
+                                log.info(
+                                    "[ML-API] Preço R$ %.2f obtido via lista de ofertas (%s)",
+                                    price,
+                                    api_url,
+                                )
+                                return PriceResult(
+                                    price=price,
+                                    available=available,
+                                    name=name,
+                                    source="ml:api-oficial",
+                                    final_price=price,
+                                )
+
+                    # C) Objeto individual (produto de catálogo ou item direto)
+                    if isinstance(data, dict):
+                        name = data.get("title") or data.get("name")
+
+                        # 1. Buy box winner do produto de catálogo
+                        bb = data.get("buy_box_winner")
+                        if isinstance(bb, dict):
+                            if bb.get("price") is not None:
+                                price = float(bb["price"])
+                                available = bb.get("status", "active") == "active"
+                            winner_item_id = bb.get("item_id") or bb.get("id")
+                            if price is None and winner_item_id:
+                                item_r = httpx.get(
+                                    f"https://api.mercadolibre.com/items?ids={winner_item_id}",
+                                    headers=headers,
+                                    timeout=10,
+                                )
+                                if item_r.status_code == 200:
+                                    w_json = item_r.json()
+                                    if (
+                                        isinstance(w_json, list)
+                                        and w_json
+                                        and w_json[0].get("code") == 200
+                                    ):
+                                        w_body = w_json[0].get("body", {})
+                                        if w_body.get("price") is not None:
+                                            price = float(w_body["price"])
+                                            available = w_body.get("status") == "active" and (
+                                                w_body.get("available_quantity", 0) > 0
+                                            )
+                                            name = w_body.get("title") or name
+                        elif isinstance(bb, str) and bb.startswith("MLB"):
                             item_r = httpx.get(
-                                f"https://api.mercadolibre.com/items/{winner_item_id}",
+                                f"https://api.mercadolibre.com/items?ids={bb}",
                                 headers=headers,
                                 timeout=10,
                             )
                             if item_r.status_code == 200:
-                                item_data = item_r.json()
-                                if item_data.get("price") is not None:
-                                    price = float(item_data["price"])
-                                    available = item_data.get("status") == "active" and (
-                                        item_data.get("available_quantity", 0) > 0
-                                    )
-                                    name = item_data.get("title") or name
+                                w_json = item_r.json()
+                                if (
+                                    isinstance(w_json, list)
+                                    and w_json
+                                    and w_json[0].get("code") == 200
+                                ):
+                                    w_body = w_json[0].get("body", {})
+                                    if w_body.get("price") is not None:
+                                        price = float(w_body["price"])
+                                        available = w_body.get("status") == "active" and (
+                                            w_body.get("available_quantity", 0) > 0
+                                        )
+                                        name = w_body.get("title") or name
 
-                    elif isinstance(bb, str) and bb.startswith("MLB"):
-                        winner_item_id = bb
-                        item_r = httpx.get(
-                            f"https://api.mercadolibre.com/items/{winner_item_id}",
-                            headers=headers,
-                            timeout=10,
-                        )
-                        if item_r.status_code == 200:
-                            item_data = item_r.json()
-                            if item_data.get("price") is not None:
-                                price = float(item_data["price"])
-                                available = item_data.get("status") == "active" and (
-                                    item_data.get("available_quantity", 0) > 0
-                                )
-                                name = item_data.get("title") or name
-
-                    # 3. Anúncio direto (data['price'])
-                    if price is None and data.get("price") is not None:
-                        price = float(data["price"])
-                        available = data.get("status", "active") == "active" and (data.get("available_quantity", 1) > 0)
-
-                    # 4. Variações (pickers)
-                    if price is None and "pickers" in data and isinstance(data["pickers"], list):
-                        for picker in data["pickers"]:
-                            for prod in picker.get("products", []):
-                                prod_bb = prod.get("buy_box_winner")
-                                if isinstance(prod_bb, dict) and prod_bb.get("price") is not None:
-                                    price = float(prod_bb["price"])
-                                    available = prod_bb.get("status", "active") == "active"
-                                    break
-                                elif isinstance(prod_bb, dict) and prod_bb.get("item_id"):
-                                    v_id = prod_bb.get("item_id")
-                                    v_r = httpx.get(f"https://api.mercadolibre.com/items/{v_id}", headers=headers, timeout=10)
-                                    if v_r.status_code == 200 and v_r.json().get("price") is not None:
-                                        price = float(v_r.json()["price"])
-                                        available = True
-                                        name = v_r.json().get("title") or name
-                                        break
-                            if price is not None:
-                                break
-
-                    # 5. Children IDs
-                    if price is None and data.get("children_ids"):
-                        for child_id in data["children_ids"][:3]:
-                            child_r = httpx.get(
-                                f"https://api.mercadolibre.com/products/{child_id}",
-                                headers=headers,
-                                timeout=10,
+                        # 2. Anúncio direto (data['price'])
+                        if price is None and data.get("price") is not None:
+                            price = float(data["price"])
+                            available = data.get("status", "active") == "active" and (
+                                data.get("available_quantity", 1) > 0
                             )
-                            if child_r.status_code == 200:
-                                child_data = child_r.json()
-                                c_bb = child_data.get("buy_box_winner")
-                                if isinstance(c_bb, dict) and c_bb.get("price") is not None:
-                                    price = float(c_bb["price"])
-                                    available = c_bb.get("status", "active") == "active"
-                                    name = child_data.get("title") or name
+
+                        # 3. Variações (pickers)
+                        if price is None and "pickers" in data and isinstance(data["pickers"], list):
+                            for picker in data["pickers"]:
+                                for prod in picker.get("products", []):
+                                    prod_bb = prod.get("buy_box_winner")
+                                    if isinstance(prod_bb, dict) and prod_bb.get("price") is not None:
+                                        price = float(prod_bb["price"])
+                                        available = prod_bb.get("status", "active") == "active"
+                                        break
+                                if price is not None:
                                     break
-                                elif isinstance(c_bb, dict) and c_bb.get("item_id"):
-                                    c_item_id = c_bb.get("item_id")
-                                    c_ir = httpx.get(f"https://api.mercadolibre.com/items/{c_item_id}", headers=headers, timeout=10)
-                                    if c_ir.status_code == 200 and c_ir.json().get("price") is not None:
-                                        price = float(c_ir.json()["price"])
-                                        available = True
-                                        name = c_ir.json().get("title") or name
+
+                        # 4. Children IDs
+                        if price is None and data.get("children_ids"):
+                            for child_id in data["children_ids"][:3]:
+                                child_r = httpx.get(
+                                    f"https://api.mercadolibre.com/products/{child_id}",
+                                    headers=headers,
+                                    timeout=10,
+                                )
+                                if child_r.status_code == 200:
+                                    child_data = child_r.json()
+                                    c_bb = child_data.get("buy_box_winner")
+                                    if isinstance(c_bb, dict) and c_bb.get("price") is not None:
+                                        price = float(c_bb["price"])
+                                        available = c_bb.get("status", "active") == "active"
+                                        name = child_data.get("title") or name
                                         break
 
-                if price is not None:
-                    log.info("[ML-API] Preço R$ %.2f obtido com sucesso via API oficial (%s)", price, api_url)
-                    return PriceResult(
-                        price=price,
-                        available=available,
-                        name=name,
-                        source="ml:api-oficial",
-                        final_price=price,
-                    )
-            elif r.status_code == 401:
-                log.warning(
-                    "[ML-API] HTTP 401 Unauthorized: token inválido ou expirado."
-                )
-                try:
-                    from ..db import set_setting
+                    if price is not None:
+                        log.info(
+                            "[ML-API] Preço R$ %.2f obtido com sucesso via API oficial (%s)",
+                            price,
+                            api_url,
+                        )
+                        return PriceResult(
+                            price=price,
+                            available=available,
+                            name=name,
+                            source="ml:api-oficial",
+                            final_price=price,
+                        )
+                elif r.status_code == 401:
+                    last_status = 401
+                    log.warning("[ML-API] HTTP 401 Unauthorized: token inválido ou expirado.")
+                    try:
+                        from ..db import set_setting
 
-                    set_setting("ml_token_expires_at", "0")
-                except Exception:
-                    pass
-                break
-            elif r.status_code == 403:
-                log.warning("[ML-API] HTTP 403 Forbidden para %s.", api_url)
-            elif r.status_code == 404:
-                continue
-            else:
-                log.info("[ML-API] Status HTTP %s para %s", r.status_code, api_url)
-        except Exception as exc:
-            log.warning("[ML-API] Erro ao conectar na API (%s): %s", api_url, exc)
-    return None
+                        set_setting("ml_token_expires_at", "0")
+                    except Exception:
+                        pass
+                    break
+                elif r.status_code in (403, 404):
+                    last_status = r.status_code
+                    log.warning("[ML-API] HTTP %s para %s", r.status_code, api_url)
+                else:
+                    last_status = r.status_code
+                    log.info("[ML-API] Status HTTP %s para %s", r.status_code, api_url)
+            except Exception as exc:
+                log.warning("[ML-API] Erro ao conectar na API (%s): %s", api_url, exc)
+
+    error_source = f"ml:api-{last_status}" if last_status else "ml:sem-oferta-ativa"
+    log.warning("[ML-API] Falha ao obter preço para %s. Origem do erro: %s", url, error_source)
+    return PriceResult(price=None, available=False, source=error_source)
+
+
+def scrape_ml(url: str) -> PriceResult:
+    """Consulta exclusiva via API oficial do Mercado Livre (sem scraping HTTP)."""
+    token = get_access_token()
+    if not token:
+        log.warning("[ML-API] Consulta cancelada: nenhum token OAuth disponível.")
+        return PriceResult(price=None, available=False, source="ml:sem-token")
+
+    return fetch_from_api(url, token)
 
 
 def parse(html: str, css_selector: str | None = None) -> PriceResult:

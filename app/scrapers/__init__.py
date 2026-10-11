@@ -55,20 +55,9 @@ def scrape(url: str, css_selector: str | None = None,
     """Baixa e parseia. Se houver API integrada (ex.: Mercado Livre), usa prioritariamente."""
     netloc = urlparse(url).netloc
 
-    # 1. Suporte à API oficial do Mercado Livre
+    # 1. Consulta exclusiva à API oficial do Mercado Livre (sem scraping HTTP)
     if "mercadolivre.com.br" in netloc:
-        ml_token = mercadolivre.get_access_token()
-        if ml_token:
-            api_res = mercadolivre.fetch_from_api(url, ml_token)
-            if api_res and api_res.price is not None:
-                return api_res
-            mercadolivre.log.info(
-                "[ML] API oficial consultada mas não retornou preço válido para %s. Tentando scraping...", url
-            )
-        else:
-            mercadolivre.log.info(
-                "[ML] Nenhum token válido disponível para consulta. Usando scraping como fallback."
-            )
+        return mercadolivre.scrape_ml(url)
 
     # 2. Scraping HTTP tradicional
     parser = CUSTOM_PARSERS.get(netloc, parse_html)

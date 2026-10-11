@@ -89,3 +89,75 @@ def test_refresh_access_token(mock_post, monkeypatch, tmp_path):
     mock_post.assert_not_called()
 
 
+def test_extract_candidate_ids():
+    url = "https://www.mercadolivre.com.br/mouse-gamer-attack-shark-x11/up/MLBU3269725495?pdp_filters=item_id:MLB5474859082"
+    cids = mercadolivre.extract_candidate_ids(url)
+    assert "MLB3269725495" in cids
+    assert "MLBU3269725495" in cids
+    assert "MLB5474859082" in cids
+
+
+@patch("httpx.get")
+def test_fetch_from_api_multiget(mock_get):
+    url = "https://www.mercadolivre.com.br/item/MLB5474859082"
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = [
+        {
+            "code": 200,
+            "body": {
+                "id": "MLB5474859082",
+                "title": "Mouse Gamer Attack Shark X11",
+                "price": 129.90,
+                "status": "active",
+                "available_quantity": 8,
+            },
+        }
+    ]
+    mock_get.return_value = mock_resp
+
+    res = mercadolivre.fetch_from_api(url, token="test_token")
+    assert res.price == 129.90
+    assert res.available is True
+    assert res.source == "ml:api-oficial"
+
+
+@patch("httpx.get")
+def test_fetch_from_api_forbidden_returns_source(mock_get):
+    url = "https://www.mercadolivre.com.br/item/MLB5474859082"
+    mock_resp = MagicMock()
+    mock_resp.status_code = 403
+    mock_resp.text = "Forbidden"
+    mock_get.return_value = mock_resp
+
+    res = mercadolivre.fetch_from_api(url, token="test_token")
+    assert res.price is None
+    assert res.available is False
+    assert res.source == "ml:api-403"
+
+
+def test_scrape_ml_no_token(monkeypatch):
+    monkeypatch.delenv("MERCADOLIVRE_TOKEN", raising=False)
+    monkeypatch.delenv("MERCADOLIVRE_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("MERCADOLIVRE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("MERCADOLIVRE_CLIENT_SECRET", raising=False)
+
+    res = mercadolivre.scrape_ml("https://www.mercadolivre.com.br/item/MLB123")
+    assert res.price is None
+    assert res.available is False
+    assert res.source == "ml:sem-token"
+
+
+@patch("app.scrapers.mercadolivre.scrape_ml")
+@patch("app.scrapers.base.fetch_html")
+def test_scrape_mercadolivre_never_calls_fetch_html(mock_fetch_html, mock_scrape_ml):
+    from app.scrapers import scrape
+
+    mock_scrape_ml.return_value = mercadolivre.PriceResult(price=100.0, available=True, source="ml:api-oficial")
+    res = scrape("https://www.mercadolivre.com.br/item/MLB123")
+    assert res.price == 100.0
+    mock_scrape_ml.assert_called_once()
+    mock_fetch_html.assert_not_called()
+
+
+
