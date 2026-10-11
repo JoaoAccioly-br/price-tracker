@@ -274,8 +274,12 @@ def get_scraperapi_key() -> str | None:
     return None
 
 
-def fetch_html_scraperapi(url: str, api_key: str, render_js: bool = False) -> str:
-    """Busca o HTML via ScraperAPI como plano de contingência."""
+def fetch_html_scraperapi(url: str, api_key: str, render_js: bool = False, timeout: float = 45.0) -> str:
+    """Busca o HTML via ScraperAPI como plano de contingência.
+    
+    Quando render_js=True, o ScraperAPI renderiza JavaScript (necessário para
+    SPAs como Shopee, SHEIN e TikTok Shop).
+    """
     assert_public_url(url)
     params = {
         "api_key": api_key.strip(),
@@ -284,7 +288,8 @@ def fetch_html_scraperapi(url: str, api_key: str, render_js: bool = False) -> st
     if render_js:
         params["render"] = "true"
     api_endpoint = "https://api.scraperapi.com/"
-    with httpx.Client(timeout=15, follow_redirects=True) as client:
+    req_timeout = timeout if render_js else 20.0
+    with httpx.Client(timeout=req_timeout, follow_redirects=True) as client:
         r = client.get(api_endpoint, params=params)
         r.raise_for_status()
         return r.text

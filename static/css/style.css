@@ -361,6 +361,16 @@ table.dashboard-table tr:last-child td {
 .store-lenovo .store-avatar { background: var(--pill-lenovo-text); color: #fff; }
 .store-magalu { background: var(--pill-magalu); color: var(--pill-magalu-text); }
 .store-magalu .store-avatar { background: var(--pill-magalu-text); color: #fff; }
+.store-shopee { background: rgba(238, 77, 45, 0.15); color: #ee4d2d; }
+.store-shopee .store-avatar { background: #ee4d2d; color: #fff; }
+.store-shein { background: rgba(34, 34, 34, 0.15); color: #222222; }
+.store-shein .store-avatar { background: #222222; color: #fff; }
+.store-tiktok { background: rgba(0, 0, 0, 0.12); color: #000000; }
+.store-tiktok .store-avatar { background: #000000; color: #fff; }
+.store-ml { background: rgba(255, 230, 0, 0.25); color: #333333; }
+.store-ml .store-avatar { background: #ffe600; color: #333333; }
+.store-ali { background: rgba(255, 71, 71, 0.15); color: #e62e04; }
+.store-ali .store-avatar { background: #e62e04; color: #fff; }
 
 .status-badge {
   display: inline-flex;

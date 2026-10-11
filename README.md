@@ -15,8 +15,10 @@ Cron / Agendador / Botão Web → Coletor → Scrapers & APIs → DB (Neon / SQL
 * **Lojas com Tratamento Especial:**
   * **Mercado Livre:** 100% via **API Oficial** com renovação automática de OAuth2 (suporta anúncios de catálogo `/p/`, `/up/` e ofertas individuais). Livre de bloqueios WAF.
   * **AliExpress:** Extração do preço promocional em BRL diretamente do parâmetro `pdp_npi` da URL.
+  * **Shopee Brasil:** Parser dedicado com extração de `shop_id`/`item_id`, detecção de faixas de preço (`.G27UVZ`, `.pmmxKx`) e suporte a fallback com renderização de JavaScript.
   * **Amazon Brasil:** Parser calibrado para blocos modernos de preço (`.priceToPay`, `#price_inside_buybox`), varredura de frações e detecção de CAPTCHA.
   * **Lojas Gerais:** Leitura automática de dados estruturados (`JSON-LD`, `schema.org/Product` e OpenGraph).
+  * **SPAs e Proteções Anti-Bot (Shopee, SHEIN, TikTok Shop):** Fallback inteligente integrado via ScraperAPI com `render=true` para renderização de JavaScript sem sobrecarregar a memória do servidor.
 * **Alertas no Telegram:** Disparo instantâneo e gratuito via Telegram Bot API quando o preço atingir ou for menor que o valor-alvo definido, com proteção contra spam (cooldown de 24h).
 * **Banco de Dados Híbrido:** Suporte automático a **PostgreSQL (Neon)** na nuvem e **SQLite** local.
 * **Leve e Otimizado:** 100% HTTP/JSON sem navegadores pesados, rodando perfeitamente dentro dos 512 MB de RAM do plano gratuito do Render.
@@ -84,8 +86,9 @@ python -m app.cli collect
 
 1. **Mercado Livre:** Consulta direta aos endpoints `/products/{id}` e multiget `/items?ids={id}` da API Oficial com token Bearer.
 2. **AliExpress:** Parse de parâmetros de precificação do produto (`pdp_npi`).
-3. **Amazon Brasil:** Seletores hierárquicos de Buybox (`.priceToPay`, `#corePriceDisplay`, inputs de precificação).
-4. **Lojas Gerais:**
+3. **Shopee Brasil:** Parser dedicado (`.G27UVZ`, `.pmmxKx`, blocos micro-unitários e fallback com `render=true`).
+4. **Amazon Brasil:** Seletores hierárquicos de Buybox (`.priceToPay`, `#corePriceDisplay`, inputs de precificação).
+5. **Lojas Gerais:**
    * **JSON-LD** (`<script type="application/ld+json">`, `schema.org/Offer`) — método mais estável.
    * **Meta tags** (`og:price:amount`, `product:price:amount`, `itemprop="price"`).
    * **Seletor CSS customizado** configurado na listagem.

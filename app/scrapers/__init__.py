@@ -10,10 +10,17 @@ import random
 import time
 from urllib.parse import urlparse
 
-from . import aliexpress, amazon, mercadolivre
+from . import aliexpress, amazon, mercadolivre, shopee
 from .base import PriceResult, fetch_html, fetch_html_scraperapi, get_scraperapi_key, parse_html
 
 log = logging.getLogger("collector")
+
+# Domínios que são SPAs ou requerem renderização de JavaScript / resolução de anti-bot
+JS_RENDER_DOMAINS: set[str] = {
+    "shopee.com.br",
+    "shein.com",
+    "tiktok.com",
+}
 
 AMAZON_HEADERS: dict = {
     "User-Agent": (
@@ -49,6 +56,16 @@ KABUM_HEADERS: dict = {
     "Upgrade-Insecure-Requests": "1",
 }
 
+SHOPEE_HEADERS: dict = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Referer": "https://shopee.com.br/",
+}
+
 CUSTOM_PARSERS: dict = {
     "www.amazon.com.br": amazon.parse,
     "amazon.com.br": amazon.parse,
@@ -59,6 +76,9 @@ CUSTOM_PARSERS: dict = {
     "www.aliexpress.com": aliexpress.parse,
     "aliexpress.com": aliexpress.parse,
     "m.aliexpress.com": aliexpress.parse,
+    "shopee.com.br": shopee.parse,
+    "www.shopee.com.br": shopee.parse,
+    "s.shopee.com.br": shopee.parse,
 }
 
 CUSTOM_HEADERS: dict = {
@@ -69,13 +89,16 @@ CUSTOM_HEADERS: dict = {
     "produto.mercadolivre.com.br": mercadolivre.ML_HEADERS,
     "www.kabum.com.br": KABUM_HEADERS,
     "kabum.com.br": KABUM_HEADERS,
+    "shopee.com.br": SHOPEE_HEADERS,
+    "www.shopee.com.br": SHOPEE_HEADERS,
+    "s.shopee.com.br": SHOPEE_HEADERS,
 }
 
 
 def scrape(url: str, css_selector: str | None = None,
            attempts: int = 3, retry_delay: tuple[float, float] = (3.0, 6.0)) -> PriceResult:
     """Baixa e parseia. Se houver API integrada (ex.: Mercado Livre), usa prioritariamente.
-    Caso o scraping direto falhe ou seja bloqueado (403/CAPTCHA), tenta fallback via ScraperAPI (se configurado).
+    Caso o scraping direto falhe ou seja bloqueado (403/CAPTCHA/CSR), tenta fallback via ScraperAPI (se configurado).
     """
     netloc = urlparse(url).netloc
 
@@ -96,15 +119,15 @@ def scrape(url: str, css_selector: str | None = None,
             time.sleep(random.uniform(*retry_delay))
         try:
             html = fetch_html(url, headers=headers)
-            if "aliexpress.com" in netloc:
+            if "aliexpress.com" in netloc or "shopee.com.br" in netloc:
                 result = parser(html, css_selector, url=url)
             else:
                 result = parser(html, css_selector)
             if result.price is not None:
                 direct_success = True
                 break
-            # Se a Amazon retornou página de CAPTCHA com status 200, interrompe repetições diretas
-            if result.source == "amazon:captcha":
+            # Se a Amazon retornou CAPTCHA ou a loja requer JS de SPA, interrompe repetições diretas
+            if result.source in ("amazon:captcha", "shopee:csr-js-required", "aliexpress:csr-js-required"):
                 break
         except Exception as exc:
             last_exc = exc
@@ -121,8 +144,12 @@ def scrape(url: str, css_selector: str | None = None,
         fail_reason = str(last_exc) if last_exc else result.source
         log.info("[ScraperAPI] Ativando fallback para %s (motivo: %s)", url, fail_reason)
         try:
-            html = fetch_html_scraperapi(url, scraperapi_key)
-            if "aliexpress.com" in netloc:
+            render_js = (
+                any(d in netloc for d in JS_RENDER_DOMAINS)
+                or os.environ.get("SCRAPERAPI_RENDER_JS", "").strip().lower() in ("true", "1")
+            )
+            html = fetch_html_scraperapi(url, scraperapi_key, render_js=render_js)
+            if "aliexpress.com" in netloc or "shopee.com.br" in netloc:
                 res_api = parser(html, css_selector, url=url)
             else:
                 res_api = parser(html, css_selector)
@@ -145,4 +172,4 @@ def scrape(url: str, css_selector: str | None = None,
     return result
 
 
-__all__ = ["scrape", "PriceResult", "CUSTOM_PARSERS", "CUSTOM_HEADERS"]
+__all__ = ["scrape", "PriceResult", "CUSTOM_PARSERS", "CUSTOM_HEADERS", "JS_RENDER_DOMAINS"]

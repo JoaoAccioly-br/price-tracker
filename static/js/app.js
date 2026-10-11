@@ -32,6 +32,11 @@ function getStoreClass(store) {
   if (s.includes('amazon')) return 'store-amazon';
   if (s.includes('lenovo')) return 'store-lenovo';
   if (s.includes('magalu')) return 'store-magalu';
+  if (s.includes('shopee')) return 'store-shopee';
+  if (s.includes('shein')) return 'store-shein';
+  if (s.includes('tiktok')) return 'store-tiktok';
+  if (s.includes('mercado') || s.includes('ml')) return 'store-ml';
+  if (s.includes('ali') || s.includes('aliexpress')) return 'store-ali';
   return 'store-kabum';
 }
 
