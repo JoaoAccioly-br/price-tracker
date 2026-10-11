@@ -1,7 +1,9 @@
+import os
 from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
+from app import db
 from app.analyzer import analyze_price_history, get_product_analysis
 from app.main import app
 
@@ -81,19 +83,32 @@ def test_normal_market_price():
     assert res.badge_class == "badge-normal"
 
 
-def test_api_product_analysis_endpoint():
-    client = TestClient(app)
-    # Cria produto
-    r_create = client.post("/api/products", json={"name": "Produto Analise", "target_price": 200.0})
-    assert r_create.status_code == 201
-    pid = r_create.json()["id"]
+def test_api_product_analysis_endpoint(tmp_path, monkeypatch):
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        monkeypatch.setattr(db, "DB_PATH", tmp_path / "test_analyzer.db")
+    db.init_db()
+    if db_url:
+        conn = db.get_conn()
+        with conn:
+            conn.execute("DELETE FROM prices")
+            conn.execute("DELETE FROM listings")
+            conn.execute("DELETE FROM products")
+            conn.execute("DELETE FROM app_settings")
+        conn.close()
 
-    # Consulta análise
-    r_an = client.get(f"/api/products/{pid}/analysis")
-    assert r_an.status_code == 200
-    data = r_an.json()
-    assert "verdict" in data
-    assert "label" in data
-    assert "badge_class" in data
-    assert data["verdict"] == "insufficient_data"
+    with TestClient(app) as client:
+        # Cria produto
+        r_create = client.post("/api/products", json={"name": "Produto Analise", "target_price": 200.0})
+        assert r_create.status_code == 201
+        pid = r_create.json()["id"]
+
+        # Consulta análise
+        r_an = client.get(f"/api/products/{pid}/analysis")
+        assert r_an.status_code == 200
+        data = r_an.json()
+        assert "verdict" in data
+        assert "label" in data
+        assert "badge_class" in data
+        assert data["verdict"] == "insufficient_data"
 
