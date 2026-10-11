@@ -14,11 +14,10 @@ Cron / Agendador / Botão Web → Coletor → Scrapers & APIs → DB (Neon / SQL
 
 * **Lojas com Tratamento Especial:**
   * **Mercado Livre:** 100% via **API Oficial** com renovação automática de OAuth2 (suporta anúncios de catálogo `/p/`, `/up/` e ofertas individuais). Livre de bloqueios WAF.
+  * **Shopee Brasil:** 100% via **API Oficial de Afiliados** (GraphQL `productOfferV2`) com autenticação criptográfica SHA256. Consulta direta sem bloqueios.
   * **AliExpress:** Extração do preço promocional em BRL diretamente do parâmetro `pdp_npi` da URL.
-  * **Shopee Brasil:** Parser dedicado com extração de `shop_id`/`item_id`, detecção de faixas de preço (`.G27UVZ`, `.pmmxKx`) e suporte a fallback com renderização de JavaScript.
   * **Amazon Brasil:** Parser calibrado para blocos modernos de preço (`.priceToPay`, `#price_inside_buybox`), varredura de frações e detecção de CAPTCHA.
   * **Lojas Gerais:** Leitura automática de dados estruturados (`JSON-LD`, `schema.org/Product` e OpenGraph).
-  * **SPAs e Proteções Anti-Bot (Shopee, SHEIN, TikTok Shop):** Fallback inteligente integrado via ScraperAPI com `render=true` para renderização de JavaScript sem sobrecarregar a memória do servidor.
 * **Alertas no Telegram:** Disparo instantâneo e gratuito via Telegram Bot API quando o preço atingir ou for menor que o valor-alvo definido, com proteção contra spam (cooldown de 24h).
 * **Banco de Dados Híbrido:** Suporte automático a **PostgreSQL (Neon)** na nuvem e **SQLite** local.
 * **Leve e Otimizado:** 100% HTTP/JSON sem navegadores pesados, rodando perfeitamente dentro dos 512 MB de RAM do plano gratuito do Render.
@@ -42,6 +41,8 @@ cp .env.example .env
 | `MERCADOLIVRE_CLIENT_ID` | App ID da sua aplicação no [Mercado Livre Developers](https://developers.mercadolivre.com.br/). |
 | `MERCADOLIVRE_CLIENT_SECRET` | Secret Key da sua aplicação no Mercado Livre. |
 | `MERCADOLIVRE_REFRESH_TOKEN` | Refresh Token inicial do Mercado Livre (o robô renova automaticamente a cada 6 meses). |
+| `SHOPEE_APP_ID` | App ID da sua aplicação no [Shopee Affiliate Open API](https://affiliate.shopee.com.br/open_api). |
+| `SHOPEE_APP_SECRET` | Secret Key da sua aplicação de Afiliados na Shopee. |
 | `APP_USERNAME` / `APP_PASSWORD` | Autenticação HTTP Basic opcional para proteger o painel web. |
 
 ---
@@ -55,7 +56,7 @@ python -m venv .venv && source .venv/bin/activate
 # 2. Instale as dependências
 pip install -r requirements.txt -r requirements-dev.txt
 
-# 3. Rode os testes unitários (44 testes)
+# 3. Rode os testes unitários (48 testes)
 pytest -v
 
 # 4. Inicie o servidor web
@@ -75,6 +76,7 @@ Você pode gerenciar tudo pela interface web ou pelo terminal:
 python -m app.cli add-product "Mouse Attack Shark X11" --target 120.00
 python -m app.cli add-listing 1 aliexpress "https://pt.aliexpress.com/item/..."
 python -m app.cli add-listing 1 mercadolivre "https://www.mercadolivre.com.br/..."
+python -m app.cli add-listing 1 shopee "https://shopee.com.br/product/..."
 
 # Disparar coleta manual
 python -m app.cli collect
@@ -85,8 +87,8 @@ python -m app.cli collect
 ## Como o Scraper Acha o Preço
 
 1. **Mercado Livre:** Consulta direta aos endpoints `/products/{id}` e multiget `/items?ids={id}` da API Oficial com token Bearer.
-2. **AliExpress:** Parse de parâmetros de precificação do produto (`pdp_npi`).
-3. **Shopee Brasil:** Parser dedicado (`.G27UVZ`, `.pmmxKx`, blocos micro-unitários e fallback com `render=true`).
+2. **Shopee Brasil:** Consulta direta à **Shopee Affiliate Open API** (GraphQL `productOfferV2`) com assinatura criptográfica SHA256.
+3. **AliExpress:** Parse de parâmetros de precificação do produto (`pdp_npi`).
 4. **Amazon Brasil:** Seletores hierárquicos de Buybox (`.priceToPay`, `#corePriceDisplay`, inputs de precificação).
 5. **Lojas Gerais:**
    * **JSON-LD** (`<script type="application/ld+json">`, `schema.org/Offer`) — método mais estável.

@@ -258,41 +258,6 @@ def fetch_html(url: str, headers: dict | None = None) -> str:
             return b"".join(chunks).decode(resp.encoding or "utf-8", errors="replace")
 
 
-def get_scraperapi_key() -> str | None:
-    """Obtém a chave da ScraperAPI das variáveis de ambiente ou do banco de dados."""
-    key = os.environ.get("SCRAPERAPI_KEY", "").strip() or os.environ.get("SCRAPER_API_KEY", "").strip()
-    if key:
-        return key
-    try:
-        from ..db import get_setting
-
-        db_key = get_setting("scraperapi_key")
-        if db_key and db_key.strip():
-            return db_key.strip()
-    except Exception:
-        pass
-    return None
-
-
-def fetch_html_scraperapi(url: str, api_key: str, render_js: bool = False, timeout: float = 45.0) -> str:
-    """Busca o HTML via ScraperAPI como plano de contingência.
-    
-    Quando render_js=True, o ScraperAPI renderiza JavaScript (necessário para
-    SPAs como Shopee, SHEIN e TikTok Shop).
-    """
-    assert_public_url(url)
-    params = {
-        "api_key": api_key.strip(),
-        "url": url,
-    }
-    if render_js:
-        params["render"] = "true"
-    api_endpoint = "https://api.scraperapi.com/"
-    req_timeout = timeout if render_js else 20.0
-    with httpx.Client(timeout=req_timeout, follow_redirects=True) as client:
-        r = client.get(api_endpoint, params=params)
-        r.raise_for_status()
-        return r.text
 
 
 def scrape(url: str, css_selector: str | None = None) -> PriceResult:

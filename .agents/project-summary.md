@@ -17,9 +17,9 @@ cron / botão na UI → collector → scrapers / API ML → DB (Neon / SQLite) �
 - **Scraping & Coleta**:
   - 100% HTTP/JSON assíncrono e ultra-leve. **Playwright e navegadores headless foram totalmente removidos** para economizar memória RAM e rodar com folga no plano gratuito do Render (512MB RAM).
   - **Mercado Livre**: 100% via API Oficial (sem web scraping/HTML fallback para evitar WAF). Suporte a catálogo (`/products/{id}`), ofertas de catálogo (`/products/{id}/items`), anúncios diretos e multiget oficial (`/items?ids={id}`). OAuth2 com renovação automática de tokens via `refresh_token` de 6 meses persistido no banco.
+  - **Shopee Brasil**: 100% via API Oficial de Afiliados (GraphQL `productOfferV2`) autenticada com HMAC-SHA256 usando `SHOPEE_APP_ID` e `SHOPEE_APP_SECRET`.
   - **AliExpress**: Extração via parâmetro `pdp_npi` da URL copiada da busca/compartilhamento (ignora o shell CSR vazio).
   - **Amazon**: Parser especializado com seletores modernos (`.priceToPay`, `#price_inside_buybox`, `#newBuyBoxPrice`, `span.apexPriceToPay`), busca de frações em `.a-price-whole`/`.a-price-fraction`, e detecção de desafios de CAPTCHA (`amazon:captcha`).
-  - **Fallback ScraperAPI opcional**: Se `SCRAPERAPI_KEY` for configurado, requisições diretas que falharem ou sofrerem 403/CAPTCHA tentam uma segunda leitura via ScraperAPI.
 - **Alertas & Notificações**:
   - Módulo `app/notifier.py` com envio de notificações instantâneas exclusivamente via **Telegram Bot API** (HTTPS na porta 443, 100% gratuito e compatível com as restrições de porta de saída do Render). Lógica anti-spam e cooldown de 24h por produto implementada na tabela `products` (`last_alert_at`, `last_alert_price`).
 - **Frontend**: Single-Page Application (SPA) em HTML5/Vanilla JS modular, CSS centralizado (paleta D·Rosa), Chart.js (CDN) e Font Awesome 6.5.2 (CDN).
@@ -38,8 +38,9 @@ cron / botão na UI → collector → scrapers / API ML → DB (Neon / SQLite) �
 |---|---|
 | `app/db.py` | Camada de conexão híbrida (Neon PostgreSQL ou SQLite local), schemas DDL, cursores, transações, campos de alerta e tabela `app_settings`. |
 | `app/migrate_to_neon.py` | Script utilitário para migrar dados históricos do SQLite local para o PostgreSQL na Neon. |
-| `app/scrapers/base.py` | `PriceResult`, `parse_brl()`, `parse_html()`, `fetch_html()`, detecção de cupons e suporte a ScraperAPI. |
-| `app/scrapers/__init__.py` | Roteador de scrapers: rota exclusiva para API do Mercado Livre (`scrape_ml`), headers dedicados para Amazon/Kabum, e fallback inteligente. |
+| `app/scrapers/base.py` | `PriceResult`, `parse_brl()`, `parse_html()`, `fetch_html()` e detecção de cupons. |
+| `app/scrapers/__init__.py` | Roteador de scrapers: rota exclusiva para API do Mercado Livre (`scrape_ml`), API da Shopee (`scrape_shopee`), e headers dedicados para Amazon/Kabum. |
+| `app/scrapers/shopee.py` | Consulta oficial via Shopee Affiliate Open API (GraphQL `productOfferV2`) com assinatura SHA256. |
 | `app/scrapers/amazon.py` | Parser específico para Amazon: seletores modernos, varredura de frações e detecção de CAPTCHA. |
 | `app/scrapers/aliexpress.py` | Parser específico para AliExpress: extração de preço e promoção via parâmetro `pdp_npi` da URL e título via `og:title`. |
 | `app/scrapers/mercadolivre.py` | Consulta exclusiva via API oficial: multiget `/items?ids=...`, `/products/...`, extração ampla de IDs (`extract_candidate_ids`), e OAuth com auto-refresh de 6 meses. |
@@ -49,7 +50,7 @@ cron / botão na UI → collector → scrapers / API ML → DB (Neon / SQLite) �
 | `app/cli.py` | Interface de linha de comando para gerenciar produtos, listings e disparar coleta. |
 | `static/` | Frontend modular: `index.html`, `js/router.js`, `js/utils.js`, controladores (`produtos.js`, `painel.js`, `lojas.js`, `alertas.js`, `historico.js`, `cadastro.js`) e templates em `views/*.html`. |
 | `Dockerfile` | Multi-stage build com base `python:3.12-slim-bookworm`, sem root, healthcheck nativo com `urllib.request`. |
-| `tests/` | Suite com 44 testes unitários cobrindo todos os scrapers, API, banco e notificações. |
+| `tests/` | Suite com 48 testes unitários cobrindo todos os scrapers, API, banco e notificações. |
 
 ---
 
@@ -57,7 +58,7 @@ cron / botão na UI → collector → scrapers / API ML → DB (Neon / SQLite) �
 - **products**: `id`, `name`, `category`, `target_price`, `last_alert_at`, `last_alert_price`.
 - **listings**: `id`, `product_id`, `store`, `url`, `css_selector`, `active`. `UNIQUE(product_id, url)`. Exclusão em cascata configurada.
 - **prices**: histórico de leituras. `id`, `listing_id`, `price`, `available`, `coupon_code`, `final_price`, `checked_at` (UTC). Índice em `(listing_id, checked_at)`.
-- **app_settings**: chave-valor persistente para parâmetros do sistema e tokens (`key`, `value`, `updated_at`). Usado para guardar `ml_access_token`, `ml_token_expires_at`, `ml_refresh_token` e `scraperapi_key`.
+- **app_settings**: chave-valor persistente para parâmetros do sistema e tokens (`key`, `value`, `updated_at`). Usado para guardar `ml_access_token`, `ml_token_expires_at`, `ml_refresh_token`, `shopee_app_id` e `shopee_app_secret`.
 
 ---
 
