@@ -1,50 +1,98 @@
 # Price Tracker
 
-Acompanha o preço de produtos em várias lojas, guarda o histórico e mostra tudo numa página com gráfico.
+Rastreador de preços de produtos e periféricos em e-commerces, com histórico em banco de dados, alertas instantâneos no Telegram e interface web moderna com gráficos interativos.
 
 ```
-cron/GitHub Actions → collector → scrapers → SQLite → FastAPI → static/index.html
+Cron / Agendador / Botão Web → Coletor → Scrapers & APIs → DB (Neon / SQLite) → FastAPI → Dashboard SPA
+                                            ↓
+                                 Alertas Telegram Bot
 ```
 
-## Rodando
+---
+
+## Recursos Principais
+
+* **Lojas com Tratamento Especial:**
+  * **Mercado Livre:** 100% via **API Oficial** com renovação automática de OAuth2 (suporta anúncios de catálogo `/p/`, `/up/` e ofertas individuais). Livre de bloqueios WAF.
+  * **AliExpress:** Extração do preço promocional em BRL diretamente do parâmetro `pdp_npi` da URL.
+  * **Amazon Brasil:** Parser calibrado para blocos modernos de preço (`.priceToPay`, `#price_inside_buybox`), varredura de frações e detecção de CAPTCHA.
+  * **Lojas Gerais:** Leitura automática de dados estruturados (`JSON-LD`, `schema.org/Product` e OpenGraph).
+* **Alertas no Telegram:** Disparo instantâneo e gratuito via Telegram Bot API quando o preço atingir ou for menor que o valor-alvo definido, com proteção contra spam (cooldown de 24h).
+* **Banco de Dados Híbrido:** Suporte automático a **PostgreSQL (Neon)** na nuvem e **SQLite** local.
+* **Leve e Otimizado:** 100% HTTP/JSON sem navegadores pesados, rodando perfeitamente dentro dos 512 MB de RAM do plano gratuito do Render.
+* **Interface Responsiva:** Dashboard SPA em Vanilla JS com acompanhamento de progresso em tempo real via Server-Sent Events (SSE) e gráficos históricos via Chart.js.
+
+---
+
+## Configuração do Ambiente (`.env`)
+
+Copie o arquivo de exemplo e preencha as variáveis necessárias:
 
 ```bash
+cp .env.example .env
+```
+
+| Variável | Descrição |
+| :--- | :--- |
+| `DATABASE_URL` | String de conexão do PostgreSQL (Neon). Se omitida, usa SQLite local em `data/tracker.db`. |
+| `TELEGRAM_BOT_TOKEN` | Token do Bot criado com o [@BotFather](https://t.me/BotFather) no Telegram. |
+| `TELEGRAM_CHAT_ID` | Seu ID de usuário ou grupo (obtido via [@userinfobot](https://t.me/userinfobot)). |
+| `MERCADOLIVRE_CLIENT_ID` | App ID da sua aplicação no [Mercado Livre Developers](https://developers.mercadolivre.com.br/). |
+| `MERCADOLIVRE_CLIENT_SECRET` | Secret Key da sua aplicação no Mercado Livre. |
+| `MERCADOLIVRE_REFRESH_TOKEN` | Refresh Token inicial do Mercado Livre (o robô renova automaticamente a cada 6 meses). |
+| `APP_USERNAME` / `APP_PASSWORD` | Autenticação HTTP Basic opcional para proteger o painel web. |
+
+---
+
+## Executando Localmente
+
+```bash
+# 1. Crie e ative o ambiente virtual
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
 
-# cadastrar produto e links (ou use o formulário na página)
-python -m app.cli add-product "Acer Nitro V15" --target 4500
-python -m app.cli add-listing 1 kabum "https://www.kabum.com.br/produto/..."
-python -m app.cli add-listing 1 amazon "https://www.amazon.com.br/dp/..."
+# 2. Instale as dependências
+pip install -r requirements.txt -r requirements-dev.txt
 
-python -m app.cli collect            # coleta uma vez
-uvicorn app.main:app --reload        # abre http://localhost:8000
-pytest                               # testes
+# 3. Rode os testes unitários (44 testes)
+pytest -v
+
+# 4. Inicie o servidor web
+uvicorn app.main:app --reload --port 8000
 ```
 
-Agendar a coleta (a cada 8h):
+Acesse o painel em **`http://localhost:8000`**.
 
+---
+
+## Comandos via Terminal (CLI)
+
+Você pode gerenciar tudo pela interface web ou pelo terminal:
+
+```bash
+# Cadastrar um produto e links
+python -m app.cli add-product "Mouse Attack Shark X11" --target 120.00
+python -m app.cli add-listing 1 aliexpress "https://pt.aliexpress.com/item/..."
+python -m app.cli add-listing 1 mercadolivre "https://www.mercadolivre.com.br/..."
+
+# Disparar coleta manual
+python -m app.cli collect
 ```
-0 */8 * * *  cd /caminho/notebook-tracker && .venv/bin/python -m app.cli collect
-```
 
-## Como o scraper acha o preço
+---
 
-1. **JSON-LD** (`<script type="application/ld+json">`, schema.org) — mais estável.
-2. **Meta tags** (`product:price:amount`, `og:price:amount`, `itemprop="price"`).
-3. **Seletor CSS** cadastrado no link (`--selector "span.preco"`) — frágil, último recurso.
+## Como o Scraper Acha o Preço
 
-Site que só mostra o preço via JavaScript: instale Playwright e cadastre o link com `--browser`.
-Loja que precisa de tratamento próprio: escreva um parser e registre em `app/scrapers/__init__.py`.
+1. **Mercado Livre:** Consulta direta aos endpoints `/products/{id}` e multiget `/items?ids={id}` da API Oficial com token Bearer.
+2. **AliExpress:** Parse de parâmetros de precificação do produto (`pdp_npi`).
+3. **Amazon Brasil:** Seletores hierárquicos de Buybox (`.priceToPay`, `#corePriceDisplay`, inputs de precificação).
+4. **Lojas Gerais:**
+   * **JSON-LD** (`<script type="application/ld+json">`, `schema.org/Offer`) — método mais estável.
+   * **Meta tags** (`og:price:amount`, `product:price:amount`, `itemprop="price"`).
+   * **Seletor CSS customizado** configurado na listagem.
 
-## Boas práticas
+---
 
-- Poucos acessos (a coleta já espera 3–8 s entre requisições).
-- Confira `robots.txt` e os termos de cada loja.
-- Se uma loja começar a falhar, veja o log: provavelmente mudou o layout ou bloqueou o acesso.
+## Boas Práticas de Coleta
 
-## Próximos passos
-
-- Alerta no Telegram/e-mail em `collector.py` (marcado como ponto de extensão).
-- Rodar a coleta no GitHub Actions e commitar o `.db`/JSON para hospedar de graça.
-- Trocar SQLite por PostgreSQL se o projeto crescer.
+* **Intervalos saudáveis:** A coleta aguarda um atraso aleatório de 3 a 8 segundos entre cada link para não sobrecarregar os servidores.
+* **Agendamento recomendado:** Configure a rotina de coleta automática a cada 6 ou 8 horas (evita acionar defesas de rate limiting como o CAPTCHA da Amazon).
