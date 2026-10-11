@@ -11,6 +11,7 @@ import threading
 import time
 
 from .db import get_conn, init_db
+from .notifier import notify_price_drop, should_notify
 from .scrapers import scrape
 
 log = logging.getLogger("collector")
@@ -84,7 +85,7 @@ def _collect_all(delay: tuple[float, float]) -> dict:
     init_db()
     conn = get_conn()
     rows = conn.execute(
-        """SELECT l.*, p.name AS product_name, p.target_price
+        """SELECT l.*, p.name AS product_name, p.target_price, p.last_alert_at, p.last_alert_price
            FROM listings l JOIN products p ON p.id = l.product_id
            WHERE l.active = 1"""
     ).fetchall()
@@ -92,6 +93,8 @@ def _collect_all(delay: tuple[float, float]) -> dict:
     COLLECTOR_STATE["total"] = len(rows)
     _notify_listeners({"event": "start", "total": len(rows), "current": 0})
     stats = {"ok": 0, "failed": 0}
+    # Rastreia alertas já disparados nesta mesma execução para evitar duplicados
+    alerted_in_run: dict[int, tuple[str, float]] = {}
     try:
         for i, row in enumerate(rows):
             COLLECTOR_STATE["current"] = i + 1
@@ -140,9 +143,35 @@ def _collect_all(delay: tuple[float, float]) -> dict:
 
             target = row["target_price"]
             if target and result.available and effective_price <= target:
-                # ponto de extensão: troque por Telegram / e-mail
                 log.warning("ALERTA: %s a R$ %.2f na %s (alvo R$ %.2f)%s",
                             row["product_name"], effective_price, row["store"], target, coupon_info)
+
+                prod_id = row["product_id"]
+                if prod_id in alerted_in_run:
+                    curr_last_at, curr_last_price = alerted_in_run[prod_id]
+                else:
+                    curr_last_at = row["last_alert_at"]
+                    curr_last_price = row["last_alert_price"]
+
+                if should_notify(target, effective_price, curr_last_at, curr_last_price):
+                    try:
+                        notify_price_drop(
+                            product_name=row["product_name"],
+                            store=row["store"],
+                            url=row["url"],
+                            current_price=effective_price,
+                            target_price=target,
+                            coupon_code=result.coupon_code,
+                        )
+                        now_utc = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+                        with conn:
+                            conn.execute(
+                                "UPDATE products SET last_alert_at = ?, last_alert_price = ? WHERE id = ?",
+                                (now_utc, effective_price, prod_id),
+                            )
+                        alerted_in_run[prod_id] = (now_utc, effective_price)
+                    except Exception as err:
+                        log.error("Erro ao processar notificação de alerta para o produto %s: %s", prod_id, err)
     finally:
         conn.close()
         COLLECTOR_STATE["running"] = False
