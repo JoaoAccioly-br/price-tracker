@@ -155,6 +155,8 @@ def _collect_all(delay: tuple[float, float]) -> dict:
 
                 if should_notify(target, effective_price, curr_last_at, curr_last_price):
                     try:
+                        from .analyzer import get_product_analysis
+                        analysis = get_product_analysis(prod_id, current_price=effective_price, conn=conn)
                         notify_price_drop(
                             product_name=row["product_name"],
                             store=row["store"],
@@ -162,6 +164,7 @@ def _collect_all(delay: tuple[float, float]) -> dict:
                             current_price=effective_price,
                             target_price=target,
                             coupon_code=result.coupon_code,
+                            analysis=analysis,
                         )
                         now_utc = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
                         with conn:

@@ -131,6 +131,11 @@ function renderPainelTable() {
     const storeInitial = store ? store[0].toUpperCase() : '?';
     const iconCls = typeof getCategoryIcon === 'function' ? getCategoryIcon(p.category) : 'fa-solid fa-laptop';
 
+    let dealBadge = '';
+    if (p.analysis && p.analysis.label) {
+      dealBadge = `<div style="margin-top:3px"><span class="deal-badge ${p.analysis.badge_class}" title="${escapeHtml(p.analysis.description || '')}">${escapeHtml(p.analysis.label)}</span></div>`;
+    }
+
     return `
       <tr>
         <td>
@@ -150,7 +155,7 @@ function renderPainelTable() {
         </td>
         <td><span class="price-highlight">${brl(bestP)}</span></td>
         <td>${target ? brl(target) : '—'}</td>
-        <td>${statusBadge}</td>
+        <td>${statusBadge}${dealBadge}</td>
         <td>
           <button class="link-view" onclick="selectProductAndNavigate(${p.id})">
             Ver lojas <i class="fa-solid fa-arrow-right" style="font-size:11px; margin-left:3px"></i>

@@ -66,6 +66,7 @@ def send_telegram(
     coupon_code: str | None = None,
     bot_token: str | None = None,
     chat_id: str | None = None,
+    analysis: dict | None = None,
 ) -> bool:
     """Envia alerta para o Telegram via Bot HTTP API oficial."""
     token = (bot_token or TELEGRAM_BOT_TOKEN).strip()
@@ -76,12 +77,33 @@ def send_telegram(
         return False
 
     coupon_text = f" (cupom: <code>{html.escape(coupon_code)}</code>)" if coupon_code else ""
+
+    analysis_text = ""
+    if analysis:
+        d = analysis.to_dict() if hasattr(analysis, "to_dict") else analysis
+        label = d.get("label", "")
+        desc = d.get("description", "")
+        avg30 = d.get("avg_30d")
+        avg60 = d.get("avg_60d")
+        min60 = d.get("min_60d")
+
+        stats = []
+        if avg30:
+            stats.append(f"Média 30d: R$ {avg30:.2f}")
+        if avg60:
+            stats.append(f"Média 60d: R$ {avg60:.2f}")
+        if min60:
+            stats.append(f"Mín 60d: R$ {min60:.2f}")
+        stats_line = f"\n📈 <i>{' | '.join(stats)}</i>" if stats else ""
+        analysis_text = f"\n\n📊 <b>Análise de Promoção:</b>\n{label}{stats_line}\n<i>{html.escape(desc)}</i>"
+
     text = (
         f"🎯 <b>Alerta de Preço Atingido!</b>\n\n"
         f"📦 <b>Produto:</b> {html.escape(product_name)}\n"
         f"🏪 <b>Loja:</b> {html.escape(store)}\n"
         f"💰 <b>Preço:</b> R$ {current_price:.2f}{coupon_text}\n"
-        f"🎯 <b>Alvo:</b> R$ {target_price:.2f}\n\n"
+        f"🎯 <b>Alvo:</b> R$ {target_price:.2f}"
+        f"{analysis_text}\n\n"
         f'👉 <a href="{html.escape(url, quote=True)}">Acessar oferta na {html.escape(store)}</a>'
     )
 
@@ -113,6 +135,7 @@ def notify_price_drop(
     target_price: float,
     coupon_code: str | None = None,
     telegram_chat_id: str | None = None,
+    analysis: dict | None = None,
     **kwargs,
 ) -> dict[str, bool]:
     """Ponto central de despacho de notificações via Telegram."""
@@ -128,6 +151,7 @@ def notify_price_drop(
             target_price=target_price,
             coupon_code=coupon_code,
             chat_id=chat_target,
+            analysis=analysis,
         )
 
     if not results:

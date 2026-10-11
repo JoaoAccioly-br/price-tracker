@@ -95,6 +95,10 @@ function renderProdutosView() {
         badge = `<span class="status-badge status-above">${diffPct}% acima do alvo</span>`;
       }
     }
+    let dealBadge = '';
+    if (p.analysis && p.analysis.label) {
+      dealBadge = `<div style="margin-top:3px"><span class="deal-badge ${p.analysis.badge_class}" title="${escapeHtml(p.analysis.description || '')}">${escapeHtml(p.analysis.label)}</span></div>`;
+    }
     const iconCls = typeof getCategoryIcon === 'function' ? getCategoryIcon(p.category) : 'fa-solid fa-laptop';
 
     return `
@@ -104,7 +108,7 @@ function renderProdutosView() {
           ${escapeHtml(p.name)}
         </div>
         <div class="p-item-sub">Melhor <b>${brl(bestP)}</b> · ${escapeHtml(p.best_store || 'loja')}</div>
-        <div>${badge}</div>
+        <div>${badge}${dealBadge}</div>
       </div>
     `;
   }).join('');
@@ -153,6 +157,27 @@ function renderProductDetailCard() {
     }
   }
 
+  let analysisBox = '';
+  if (p.analysis && p.analysis.verdict) {
+    const a = p.analysis;
+    const stats = [];
+    if (a.avg_30d) stats.push(`Média 30d: <b>${brl(a.avg_30d)}</b>`);
+    if (a.min_30d) stats.push(`Mín 30d: <b>${brl(a.min_30d)}</b>`);
+    if (a.avg_60d) stats.push(`Média 60d: <b>${brl(a.avg_60d)}</b>`);
+    if (a.min_60d) stats.push(`Mín 60d: <b>${brl(a.min_60d)}</b>`);
+
+    analysisBox = `
+      <div class="analysis-card-box">
+        <div class="analysis-header">
+          <span style="font-weight:700; font-size:12px; color:var(--text-title)"><i class="fa-solid fa-chart-line" style="margin-right:5px; color:var(--accent-red)"></i> Termômetro de Promoção (30 & 60 dias)</span>
+          <span class="deal-badge ${a.badge_class}">${escapeHtml(a.label)}</span>
+        </div>
+        <div class="analysis-desc">${escapeHtml(a.description)}</div>
+        ${stats.length ? `<div class="analysis-stats-row">${stats.join(' · ')}</div>` : ''}
+      </div>
+    `;
+  }
+
   const iconCls = typeof getCategoryIcon === 'function' ? getCategoryIcon(p.category) : 'fa-solid fa-laptop';
 
   detailArea.innerHTML = `
@@ -169,6 +194,8 @@ function renderProductDetailCard() {
       </div>
       <div>${statusBadge}</div>
     </div>
+
+    ${analysisBox}
 
     <table class="listings-table">
       <thead>

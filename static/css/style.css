@@ -386,6 +386,80 @@ table.dashboard-table tr:last-child td {
   color: var(--accent-yellow-text);
   border: 1px solid var(--accent-yellow-border);
 }
+
+/* Badges de Análise de Promoção (30 e 60 dias) */
+.deal-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.badge-real-deal {
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+.badge-all-time-low {
+  background: rgba(249, 115, 22, 0.14);
+  color: #ea580c;
+  border: 1px solid rgba(249, 115, 22, 0.35);
+}
+.badge-fake-deal {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  animation: pulse-danger 2.5s infinite ease-in-out;
+}
+.badge-normal {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.04));
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+.badge-collecting {
+  background: rgba(100, 116, 139, 0.08);
+  color: #64748b;
+  border: 1px solid rgba(100, 116, 139, 0.2);
+}
+@keyframes pulse-danger {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.98); opacity: 0.85; }
+}
+
+.analysis-card-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg-surface-alt, #fafafa);
+  border: 1px solid var(--border-color);
+  margin-top: 10px;
+}
+.analysis-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.analysis-desc {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.analysis-stats-row {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.analysis-stats-row b {
+  color: var(--text-title);
+}
 .price-highlight {
   font-weight: 700;
   color: var(--accent-green-text);

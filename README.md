@@ -17,8 +17,8 @@ Cron / Agendador / Botão Web → Coletor → Scrapers & APIs → DB (Neon / SQL
   * **Shopee Brasil:** 100% via **API Oficial de Afiliados** (GraphQL `productOfferV2`) com autenticação criptográfica SHA256. Consulta direta sem bloqueios.
   * **AliExpress:** Extração do preço promocional em BRL diretamente do parâmetro `pdp_npi` da URL.
   * **Amazon Brasil:** Parser calibrado para blocos modernos de preço (`.priceToPay`, `#price_inside_buybox`), varredura de frações e detecção de CAPTCHA.
-  * **Lojas Gerais:** Leitura automática de dados estruturados (`JSON-LD`, `schema.org/Product` e OpenGraph).
-* **Alertas no Telegram:** Disparo instantâneo e gratuito via Telegram Bot API quando o preço atingir ou for menor que o valor-alvo definido, com proteção contra spam (cooldown de 24h).
+* **Termômetro de Promoção (30 & 60 dias):** Detecção estatística de **Promoções Falsas** ("metade do dobro" / inflação pré-desconto), identificando se a oferta atual é uma *Promoção Real*, *Menor Preço em 60 dias* ou se o preço foi inflado artificialmente nos últimos dias.
+* **Alertas no Telegram com Análise:** Disparo instantâneo e gratuito via Telegram Bot API quando o preço atingir ou for menor que o valor-alvo definido, incluindo a chancela estatística de 30/60 dias e proteção contra spam (cooldown de 24h).
 * **Banco de Dados Híbrido:** Suporte automático a **PostgreSQL (Neon)** na nuvem e **SQLite** local.
 * **Leve e Otimizado:** 100% HTTP/JSON sem navegadores pesados, rodando perfeitamente dentro dos 512 MB de RAM do plano gratuito do Render.
 * **Interface Responsiva:** Dashboard SPA em Vanilla JS com acompanhamento de progresso em tempo real via Server-Sent Events (SSE) e gráficos históricos via Chart.js.
@@ -56,7 +56,7 @@ python -m venv .venv && source .venv/bin/activate
 # 2. Instale as dependências
 pip install -r requirements.txt -r requirements-dev.txt
 
-# 3. Rode os testes unitários (48 testes)
+# 3. Rode os testes unitários (54 testes)
 pytest -v
 
 # 4. Inicie o servidor web

@@ -23,6 +23,7 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+from .analyzer import analyze_price_history, get_product_analysis
 from .collector import add_listener, collect_all, get_status, remove_listener
 from .db import DBConflictError, get_conn, init_db
 
@@ -146,8 +147,17 @@ def list_products():
                       lt.available, lt.checked_at
                FROM listings l
                LEFT JOIN latest lt ON lt.listing_id = l.id AND lt.rn = 1
-               WHERE l.active = 1
-               ORDER BY l.id"""
+                WHERE l.active = 1
+                ORDER BY l.id"""
+        ).fetchall()
+
+        # Leituras históricas para cálculo de métricas de 30 e 60 dias (promoção falsa / real)
+        price_rows = conn.execute(
+            """SELECT l.product_id, pr.price, pr.final_price, pr.checked_at
+               FROM prices pr
+               JOIN listings l ON l.id = pr.listing_id
+               WHERE (pr.available = 1 OR pr.available IS NULL)
+               ORDER BY pr.checked_at ASC"""
         ).fetchall()
     finally:
         conn.close()
@@ -156,6 +166,11 @@ def list_products():
     for r in rows:
         d = dict(r)
         by_product.setdefault(d.pop("product_id"), []).append(d)
+
+    prices_by_product: dict[int, list[dict]] = {}
+    for pr_r in price_rows:
+        d = dict(pr_r)
+        prices_by_product.setdefault(d["product_id"], []).append(d)
 
     for p in products:
         listings = by_product.get(p["id"], [])
@@ -180,13 +195,30 @@ def list_products():
                 )
                 best_p = best_l["final_price"] if best_l.get("final_price") is not None else best_l["last_price"]
 
+        prod_records = prices_by_product.get(p["id"], [])
+        analysis = analyze_price_history(prod_records, current_price=best_p)
+
         p.update({
             "listings": listings,
             "best_price": best_p,
             "best_store": best_l["store"] if best_l else None,
             "best_listing": best_l,
+            "analysis": analysis.to_dict(),
         })
     return products
+
+
+@app.get("/api/products/{product_id}/analysis")
+def product_analysis(product_id: int):
+    """Retorna análise detalhada de 30 e 60 dias para detecção de promoção falsa."""
+    conn = get_conn()
+    try:
+        p = conn.execute("SELECT id FROM products WHERE id = ?", (product_id,)).fetchone()
+        if not p:
+            raise HTTPException(404, "Produto não encontrado")
+        return get_product_analysis(product_id, conn=conn).to_dict()
+    finally:
+        conn.close()
 
 
 @app.get("/api/products/{product_id}/history")
