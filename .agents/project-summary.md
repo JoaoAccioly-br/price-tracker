@@ -35,7 +35,8 @@ cron / botão na UI → collector → scrapers / API ML → DB (Neon / SQLite) �
 | `app/scrapers/__init__.py` | Roteador de scrapers: prioriza API oficial para Mercado Livre com `get_access_token()`, seguido de scrapers específicos (`CUSTOM_PARSERS`) e genérico com retry. |
 | `app/scrapers/amazon.py` | Parser específico para páginas da Amazon (lida com blocos dinâmicos e preços ocultos). |
 | `app/scrapers/mercadolivre.py` | Integração híbrida ML: consulta endpoints `/products/{MLB_ID}` (catálogo com `buy_box_winner.price`) e `/items/{MLB_ID}`, gerenciamento de OAuth2 e renovação automática de tokens via `refresh_token`, e fallback para HTML. |
-| `app/collector.py` | `collect_all()` — itera pelos links ativos, coleta preços, persiste na tabela `prices`, atualiza progresso SSE e dispara alertas. |
+| `app/collector.py` | `collect_all()` — itera pelos links ativos, coleta preços, persiste na tabela `prices`, atualiza progresso SSE e despacha alertas com deduplicação. |
+| `app/notifier.py` | Módulo de notificações: e-mail gratuito via SMTP (Gmail App Password) e Telegram Bot, com suporte a múltiplos destinatários, deduplicação e cooldown. |
 | `app/main.py` | Rotas FastAPI: CRUD de produtos e listings (inclui exclusão `DELETE`), disparo de coleta, status e SSE em tempo real (`/api/collect/events`), e mount de arquivos estáticos. |
 | `app/cli.py` | Interface de linha de comando para gerenciar produtos, listings e disparar coleta. |
 | `static/` | Frontend modular: `index.html`, `js/router.js`, `js/utils.js` (XSS helpers), controladores (`produtos.js`, `painel.js`, `lojas.js`, `alertas.js`, `historico.js`, `cadastro.js`) e templates em `views/*.html`. |
@@ -45,7 +46,7 @@ cron / botão na UI → collector → scrapers / API ML → DB (Neon / SQLite) �
 ---
 
 ## Modelo de Dados
-- **products**: `id`, `name`, `category` (ex.: Notebook, Periférico), `target_price`.
+- **products**: `id`, `name`, `category` (ex.: Notebook, Periférico), `target_price`, `last_alert_at`, `last_alert_price`.
 - **listings**: `id`, `product_id`, `store`, `url`, `css_selector`, `use_browser` (descontinuado), `active`. `UNIQUE(product_id, url)`. Exclusão em cascata configurada.
 - **prices**: histórico de leituras. `id`, `listing_id`, `price`, `available`, `coupon_code`, `final_price`, `checked_at` (UTC). Índice em `(listing_id, checked_at)`.
 - **app_settings**: chave-valor persistente para parâmetros do sistema e tokens (`key`, `value`, `updated_at`). Usado para guardar `ml_access_token`, `ml_token_expires_at` e `ml_refresh_token`.

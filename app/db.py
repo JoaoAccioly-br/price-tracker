@@ -23,7 +23,9 @@ CREATE TABLE IF NOT EXISTS products (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT NOT NULL,
     category     TEXT NOT NULL DEFAULT 'Notebook',
-    target_price REAL
+    target_price REAL,
+    last_alert_at TEXT,
+    last_alert_price REAL
 );
 
 CREATE TABLE IF NOT EXISTS listings (
@@ -62,7 +64,9 @@ CREATE TABLE IF NOT EXISTS products (
     id           BIGSERIAL PRIMARY KEY,
     name         TEXT NOT NULL,
     category     TEXT NOT NULL DEFAULT 'Notebook',
-    target_price DOUBLE PRECISION
+    target_price DOUBLE PRECISION,
+    last_alert_at TEXT,
+    last_alert_price DOUBLE PRECISION
 );
 
 CREATE TABLE IF NOT EXISTS listings (
@@ -233,6 +237,8 @@ def init_db() -> None:
             # Executa o schema DDL
             with conn._raw.cursor() as cur:
                 cur.execute(POSTGRES_SCHEMA)
+                cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS last_alert_at TEXT")
+                cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS last_alert_price DOUBLE PRECISION")
         conn.close()
         return
 
@@ -243,6 +249,10 @@ def init_db() -> None:
         prod_cols = {row["name"] for row in conn.execute("PRAGMA table_info(products)").fetchall()}
         if "category" not in prod_cols:
             conn.execute("ALTER TABLE products ADD COLUMN category TEXT NOT NULL DEFAULT 'Notebook'")
+        if "last_alert_at" not in prod_cols:
+            conn.execute("ALTER TABLE products ADD COLUMN last_alert_at TEXT")
+        if "last_alert_price" not in prod_cols:
+            conn.execute("ALTER TABLE products ADD COLUMN last_alert_price REAL")
 
         price_cols = {row["name"] for row in conn.execute("PRAGMA table_info(prices)").fetchall()}
         if "coupon_code" not in price_cols:
