@@ -51,3 +51,27 @@ def test_amazon_price_hidden_variant():
     r = parse(html)
     assert r.price is None and r.source == "amazon:price-hidden"
 
+
+def test_amazon_captcha_detection():
+    html = """
+    <html>
+      <form action="/errors/validateCaptcha" method="get">
+        <h4>Digite os caracteres que você vê abaixo</h4>
+      </form>
+    </html>
+    """
+    r = parse(html)
+    assert r.price is None
+    assert r.source == "amazon:captcha"
+
+
+def test_amazon_standalone_pricetopay():
+    html = """
+    <h1 id="productTitle">Mouse Gamer Logitech G203</h1>
+    <span class="priceToPay"><span class="a-offscreen">R$ 139,90</span></span>
+    """
+    r = parse(html)
+    assert r.price == 139.90
+    assert r.name == "Mouse Gamer Logitech G203"
+
+
