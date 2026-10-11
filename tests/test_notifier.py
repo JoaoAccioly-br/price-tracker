@@ -5,8 +5,6 @@ import pytest
 
 from app.notifier import (
     notify_price_drop,
-    parse_recipients,
-    send_email_smtp,
     send_telegram,
     should_notify,
 )
@@ -50,28 +48,6 @@ def test_should_notify_conditions():
     )
 
 
-def test_send_email_smtp():
-    with patch("smtplib.SMTP") as mock_smtp:
-        mock_instance = MagicMock()
-        mock_smtp.return_value.__enter__.return_value = mock_instance
-
-        success = send_email_smtp(
-            subject="Teste SMTP",
-            plain_text="Texto",
-            html_content="<p>Html</p>",
-            to_email="cliente@exemplo.com",
-            host="smtp.gmail.com",
-            port=587,
-            user="usuario@gmail.com",
-            password="app_password",
-            use_ssl=False,
-        )
-        assert success is True
-        mock_instance.starttls.assert_called_once()
-        mock_instance.login.assert_called_once_with("usuario@gmail.com", "app_password")
-        mock_instance.send_message.assert_called_once()
-
-
 def test_send_telegram():
     mock_resp = MagicMock()
     mock_resp.status_code = 200
@@ -98,15 +74,10 @@ def test_send_telegram():
 
 
 def test_notify_price_drop_dispatch(monkeypatch):
-    monkeypatch.setattr("app.notifier.SMTP_HOST", "smtp.gmail.com")
-    monkeypatch.setattr("app.notifier.SMTP_USER", "usuario@gmail.com")
-    monkeypatch.setattr("app.notifier.SMTP_PASS", "senha123")
-    monkeypatch.setattr("app.notifier.ALERT_EMAIL_TO", "teste@exemplo.com")
     monkeypatch.setattr("app.notifier.TELEGRAM_BOT_TOKEN", "tg_token")
     monkeypatch.setattr("app.notifier.TELEGRAM_CHAT_ID", "tg_chat")
 
-    with patch("app.notifier.send_email_smtp", return_value=True) as mock_smtp, \
-         patch("app.notifier.send_telegram", return_value=True) as mock_tg:
+    with patch("app.notifier.send_telegram", return_value=True) as mock_tg:
         results = notify_price_drop(
             product_name="Monitor Gamer",
             store="Amazon",
@@ -114,34 +85,5 @@ def test_notify_price_drop_dispatch(monkeypatch):
             current_price=899.00,
             target_price=950.00,
         )
-        assert results.get("email_smtp") is True
         assert results.get("telegram") is True
-        mock_smtp.assert_called_once()
         mock_tg.assert_called_once()
-
-
-def test_multiple_recipients():
-    # 1. Testar parser
-    assert parse_recipients("user1@a.com, user2@b.com") == ["user1@a.com", "user2@b.com"]
-    assert parse_recipients("user1@a.com; user2@b.com") == ["user1@a.com", "user2@b.com"]
-    assert parse_recipients(["u1@a.com", "u2@b.com"]) == ["u1@a.com", "u2@b.com"]
-
-    # 2. SMTP com múltiplos e-mails
-    with patch("smtplib.SMTP") as mock_smtp:
-        mock_instance = MagicMock()
-        mock_smtp.return_value.__enter__.return_value = mock_instance
-
-        success = send_email_smtp(
-            subject="Multi SMTP",
-            plain_text="Texto",
-            html_content="<p>H</p>",
-            to_email=["u1@a.com", "u2@b.com"],
-            host="smtp.gmail.com",
-            port=587,
-            user="user@gmail.com",
-            password="pass",
-        )
-        assert success is True
-        # Verifica se to_addrs no send_message recebeu a lista
-        _, kwargs = mock_instance.send_message.call_args
-        assert kwargs["to_addrs"] == ["u1@a.com", "u2@b.com"]

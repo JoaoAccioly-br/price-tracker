@@ -176,14 +176,13 @@ def fetch_from_api(url: str, token: str) -> PriceResult | None:
         [
             f"https://api.mercadolibre.com/products/{mlb_id}",
             f"https://api.mercadolibre.com/products/{mlb_id}/items",
-            f"https://api.mercadolibre.com/sites/MLB/search?catalog_product_id={mlb_id}&sort=price_asc",
             f"https://api.mercadolibre.com/items/{mlb_id}",
         ]
         if is_catalog
         else [
             f"https://api.mercadolibre.com/items/{mlb_id}",
             f"https://api.mercadolibre.com/products/{mlb_id}",
-            f"https://api.mercadolibre.com/sites/MLB/search?catalog_product_id={mlb_id}&sort=price_asc",
+            f"https://api.mercadolibre.com/products/{mlb_id}/items",
         ]
     )
 

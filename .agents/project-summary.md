@@ -37,7 +37,7 @@ cron / botão na UI → collector → scrapers / API ML → DB (Neon / SQLite) �
 | `app/scrapers/aliexpress.py` | Parser específico para AliExpress: extração de preço e desconto via parâmetro `pdp_npi` da URL e título via `og:title`. |
 | `app/scrapers/mercadolivre.py` | Integração híbrida ML: consulta endpoints `/products/{MLB_ID}` (catálogo com `buy_box_winner.price`) e `/items/{MLB_ID}`, gerenciamento de OAuth2 e renovação automática de tokens via `refresh_token`, e fallback para HTML. |
 | `app/collector.py` | `collect_all()` — itera pelos links ativos, coleta preços, persiste na tabela `prices`, atualiza progresso SSE e despacha alertas com deduplicação. |
-| `app/notifier.py` | Módulo de notificações: e-mail gratuito via SMTP (Gmail App Password) e Telegram Bot, com suporte a múltiplos destinatários, deduplicação e cooldown. |
+| `app/notifier.py` | Módulo de notificações via Telegram Bot (API HTTP REST), com lógica de deduplicação e cooldown anti-spam. |
 | `app/main.py` | Rotas FastAPI: CRUD de produtos e listings (inclui exclusão `DELETE`), disparo de coleta, status e SSE em tempo real (`/api/collect/events`), e mount de arquivos estáticos. |
 | `app/cli.py` | Interface de linha de comando para gerenciar produtos, listings e disparar coleta. |
 | `static/` | Frontend modular: `index.html`, `js/router.js`, `js/utils.js` (XSS helpers), controladores (`produtos.js`, `painel.js`, `lojas.js`, `alertas.js`, `historico.js`, `cadastro.js`) e templates em `views/*.html`. |
