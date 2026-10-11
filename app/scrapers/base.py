@@ -275,17 +275,16 @@ def get_scraperapi_key() -> str | None:
 
 
 def fetch_html_scraperapi(url: str, api_key: str, render_js: bool = False) -> str:
-    """Busca o HTML via ScraperAPI utilizando proxy residencial brasileiro."""
+    """Busca o HTML via ScraperAPI como plano de contingência."""
     assert_public_url(url)
     params = {
         "api_key": api_key.strip(),
         "url": url,
-        "country_code": "br",
     }
     if render_js:
         params["render"] = "true"
     api_endpoint = "https://api.scraperapi.com/"
-    with httpx.Client(timeout=45, follow_redirects=True) as client:
+    with httpx.Client(timeout=15, follow_redirects=True) as client:
         r = client.get(api_endpoint, params=params)
         r.raise_for_status()
         return r.text

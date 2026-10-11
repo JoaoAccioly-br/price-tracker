@@ -112,8 +112,9 @@ def parse(html: str, css_selector: str | None = None) -> PriceResult:
     avail_text = avail_el.get_text(" ", strip=True).lower() if avail_el else ""
     available = not any(word in avail_text for word in UNAVAILABLE)
 
-    # variante que a Amazon às vezes serve (sem preço no HTML: MAP escondido).
-    if "adicione este item ao seu carrinho" in html:
+    # variante que a Amazon às vezes serve (sem preço no HTML: MAP escondido no apex_desktop).
+    apex = soup.select_one("#apex_desktop")
+    if apex and "adicione este item ao seu carrinho" in apex.get_text().lower():
         return PriceResult(None, False, name, "amazon:price-hidden")
 
     price, source = _find_price(soup)
