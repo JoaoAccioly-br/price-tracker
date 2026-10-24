@@ -85,6 +85,58 @@ def _domain_delay(domain: str, default_delay: tuple[float, float]) -> float:
     return random.uniform(*default_delay)
 
 
+def _should_auto_heal(result: PriceResult | None, exc: Exception | None) -> bool:
+    """Determina se o link deve acionar Self-Healing com IA.
+
+    Cirúrgico e imune a falsos positivos causados por bloqueios temporários (CAPTCHA/WAF),
+    timeouts de rede ou falta de credenciais/chaves de API.
+    """
+    if exc is not None:
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+        if status_code is None:
+            status_code = getattr(exc, "status_code", None)
+        return status_code in (404, 410)
+
+    if result is None:
+        return False
+
+    src = (result.source or "").strip().lower()
+
+    # Bloqueios temporários, erro de configuração ou limitação técnica
+    blocked_sources = {
+        "amazon:captcha",
+        "amazon:price-hidden",
+        "shopee:no-credentials",
+        "shopee:invalid-url",
+        "shopee:http-429",
+        "ml:no-token",
+        "ml:sem-token",
+        "ml:id-invalido",
+        "ml:http-401",
+        "ml:http-403",
+        "ml:http-429",
+        "ml:blocked",
+        "aliexpress:csr-js-required",
+    }
+    if src in blocked_sources:
+        return False
+
+    transient_prefixes = (
+        "shopee:exception-",
+        "shopee:http-5",
+        "ml:http-5",
+        "ml:exception-",
+    )
+    if any(src.startswith(prefix) for prefix in transient_prefixes):
+        return False
+
+    # Sinais reais de link expirado ou sem estoque
+    if result.available is False or result.price is None:
+        return True
+
+    return False
+
+
 def _collect_all(delay: tuple[float, float]) -> dict:
     COLLECTOR_STATE["running"] = True
     COLLECTOR_STATE["current"] = 0
@@ -165,12 +217,7 @@ def _collect_all(delay: tuple[float, float]) -> dict:
                 result, exc, checked_at_utc = scraped_cache[cache_key]
 
             # Auto-recuperação (Self-Healing): substitui anúncios expirados/esgotados/fora do ar
-            needs_healing = (
-                exc is not None
-                or result is None
-                or result.price is None
-                or (result is not None and result.available is False)
-            )
+            needs_healing = _should_auto_heal(result, exc)
             if needs_healing:
                 try:
                     new_url, healed_res, _ = heal_expired_listing(

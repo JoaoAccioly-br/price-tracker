@@ -278,3 +278,64 @@ def test_manual_heal_endpoint(client):
     with patch("app.ai.heal_expired_listing", return_value=(None, None, None)):
         res_fail = client.post(f"/api/listings/{list_id}/heal")
         assert res_fail.status_code == 404
+
+
+def test_should_auto_heal_ignores_transient_errors_and_triggers_on_real_expiration():
+    """Testa se a detecção de auto-heal ignora erros transitórios e só aciona em links realmente expirados/esgotados."""
+    import httpx
+    from app.collector import _should_auto_heal
+
+    # 1. NÃO deve acionar (False): Bloqueios temporários, falta de credenciais ou erros transitórios
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="amazon:captcha"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="shopee:no-credentials"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="ml:no-token"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="aliexpress:csr-js-required"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="shopee:http-503"), None) is False
+
+    # Outros bloqueios mapeados
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="amazon:price-hidden"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="shopee:invalid-url"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="shopee:http-429"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="ml:sem-token"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="ml:id-invalido"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="ml:http-401"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="ml:http-403"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="ml:http-429"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="ml:blocked"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="shopee:exception-Timeout"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="ml:http-502"), None) is False
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="ml:exception-RuntimeError"), None) is False
+
+    # Timeout de rede ou exceção genérica
+    assert _should_auto_heal(None, httpx.TimeoutException("timeout")) is False
+    assert _should_auto_heal(None, ConnectionError("connection reset")) is False
+
+    # HTTP 503 e 403 (erros de servidor / WAF / permissão)
+    exc_503 = Exception("Service Unavailable")
+    exc_503.response = MagicMock(status_code=503)
+    assert _should_auto_heal(None, exc_503) is False
+
+    exc_403 = Exception("Forbidden")
+    exc_403.response = MagicMock(status_code=403)
+    assert _should_auto_heal(None, exc_403) is False
+
+    # Quando result é None sem exceção
+    assert _should_auto_heal(None, None) is False
+
+    # Produto ativo saudável não deve acionar heal
+    assert _should_auto_heal(PriceResult(price=2500.0, available=True, source="amazon:#price"), None) is False
+
+    # 2. DEVE acionar (True): Sinais reais de link expirado ou esgotado
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="shopee:not-found"), None) is True
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="not-found"), None) is True
+    assert _should_auto_heal(PriceResult(price=3500.0, available=False, source="amazon:#price"), None) is True
+    assert _should_auto_heal(PriceResult(price=None, available=False, source="ml:http-404"), None) is True
+
+    # Exceção HTTP 404 (Not Found) ou 410 (Gone)
+    exc_404 = Exception("Not Found")
+    exc_404.response = MagicMock(status_code=404)
+    assert _should_auto_heal(None, exc_404) is True
+
+    exc_410 = Exception("Gone")
+    exc_410.response = MagicMock(status_code=410)
+    assert _should_auto_heal(None, exc_410) is True
