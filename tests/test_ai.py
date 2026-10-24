@@ -14,6 +14,8 @@ from app.ai import (
     get_gemini_api_key,
     get_gemini_model,
     heal_expired_listing,
+    search_amazon_offers,
+    search_kabum_offers,
 )
 from app.main import app
 from app.scrapers.base import PriceResult
@@ -344,11 +346,11 @@ def test_should_auto_heal_ignores_transient_errors_and_triggers_on_real_expirati
 
 
 def test_gemini_default_model(monkeypatch):
-    """Testa se o modelo padrão agora é gemini-3.8-flash quando não configurado."""
+    """Testa se o modelo padrão agora é gemini-3.5-flash-lite quando não configurado."""
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     import app.ai as ai
     ai._ACTIVE_GEMINI_MODEL = None
-    assert get_gemini_model() == "gemini-3.8-flash"
+    assert get_gemini_model() == "gemini-3.5-flash-lite"
 
 
 def test_gemini_404_auto_fallback_and_caching(monkeypatch):
@@ -365,9 +367,9 @@ def test_gemini_404_auto_fallback_and_caching(monkeypatch):
         resp = MagicMock()
         if "gemini-2.5-flash:" in url:
             resp.status_code = 404
-            resp.text = "404: This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash instead."
+            resp.text = "404: This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.5-flash-lite instead."
             return resp
-        elif "gemini-3.8-flash:" in url:
+        elif "gemini-3.5-flash-lite:" in url:
             resp.status_code = 200
             resp.json.return_value = {
                 "candidates": [{
@@ -387,10 +389,10 @@ def test_gemini_404_auto_fallback_and_caching(monkeypatch):
 
         # Verifica que tentou o modelo inicial e depois o modelo sugerido
         assert any("gemini-2.5-flash:" in u for u in called_urls)
-        assert any("gemini-3.8-flash:" in u for u in called_urls)
+        assert any("gemini-3.5-flash-lite:" in u for u in called_urls)
         # Verifica que o modelo ativo em cache agora é o que funcionou
-        assert ai._ACTIVE_GEMINI_MODEL == "gemini-3.8-flash"
-        assert get_gemini_model() == "gemini-3.8-flash"
+        assert ai._ACTIVE_GEMINI_MODEL == "gemini-3.5-flash-lite"
+        assert get_gemini_model() == "gemini-3.5-flash-lite"
 
     # Segunda chamada já deve ir direto para o modelo funcional em cache
     called_urls.clear()
@@ -398,7 +400,7 @@ def test_gemini_404_auto_fallback_and_caching(monkeypatch):
         results = _gemini_grounded_search("Notebook Dell Inspiron", "Notebook")
         assert len(results) == 1
         assert not any("gemini-2.5-flash:" in u for u in called_urls)
-        assert any("gemini-3.8-flash:" in u for u in called_urls)
+        assert any("gemini-3.5-flash-lite:" in u for u in called_urls)
 
 
 def test_gemini_404_auto_fallback_list_order(monkeypatch):
@@ -418,15 +420,11 @@ def test_gemini_404_auto_fallback_list_order(monkeypatch):
             resp.status_code = 404
             resp.text = "Model not found"
             return resp
-        if model == "gemini-3.8-flash":
+        if model == "gemini-3.5-flash-lite":
             resp.status_code = 404
             resp.text = "Quota exceeded or not available"
             return resp
-        if model == "gemini-2.5-flash-lite":
-            resp.status_code = 404
-            resp.text = "Quota exceeded or not available"
-            return resp
-        if model == "gemini-3-flash-preview":
+        if model == "gemini-3.5-flash-lite-preview":
             resp.status_code = 200
             resp.json.return_value = {
                 "candidates": [{
@@ -441,8 +439,8 @@ def test_gemini_404_auto_fallback_list_order(monkeypatch):
         res = _call_gemini_generate_content(headers={}, payload={})
         assert res is not None
         assert res.status_code == 200
-        assert called_models == ["gemini-custom-old", "gemini-3.8-flash", "gemini-2.5-flash-lite", "gemini-3-flash-preview"]
-        assert ai._ACTIVE_GEMINI_MODEL == "gemini-3-flash-preview"
+        assert called_models == ["gemini-custom-old", "gemini-3.5-flash-lite", "gemini-3.5-flash-lite-preview"]
+        assert ai._ACTIVE_GEMINI_MODEL == "gemini-3.5-flash-lite-preview"
 
 
 def test_diversify_by_store_round_robin():
@@ -501,3 +499,185 @@ def test_discover_product_links_diversifies_stores_in_result(monkeypatch):
         assert results[3]["store"] == "Mercado Livre"
         assert results[4]["store"] == "Shopee"
         assert results[5]["store"] == "Shopee"
+
+
+def test_gemini_429_auto_fallback_and_caching(monkeypatch):
+    """Testa auto-fallback quando o modelo Gemini retorna HTTP 429 Quota Exceeded."""
+    import httpx
+    import app.ai as ai
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    ai._ACTIVE_GEMINI_MODEL = None
+
+    called_urls = []
+
+    def mock_post(url, **kwargs):
+        called_urls.append(url)
+        resp = MagicMock()
+        if "gemini-3.5-flash-lite:" in url:
+            resp.status_code = 429
+            resp.text = '{"error": {"code": 429, "message": "You exceeded your current quota..."}}'
+            return resp
+        elif "gemini-3.5-flash-lite-preview:" in url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "candidates": [{
+                    "content": {"parts": [{"text": '{"matches": []}'}]}
+                }]
+            }
+            return resp
+        resp.status_code = 429
+        return resp
+
+    with patch("httpx.post", side_effect=mock_post):
+        res = _call_gemini_generate_content(headers={}, payload={})
+        assert res is not None
+        assert res.status_code == 200
+        assert any("gemini-3.5-flash-lite:" in u for u in called_urls)
+        assert any("gemini-3.5-flash-lite-preview:" in u for u in called_urls)
+        assert ai._ACTIVE_GEMINI_MODEL == "gemini-3.5-flash-lite-preview"
+        assert get_gemini_model() == "gemini-3.5-flash-lite-preview"
+
+    # Segunda chamada vai direto para o modelo em cache
+    called_urls.clear()
+    with patch("httpx.post", side_effect=mock_post):
+        res = _call_gemini_generate_content(headers={}, payload={})
+        assert res.status_code == 200
+        assert not any("gemini-3.5-flash-lite:" in u for u in called_urls)
+        assert any("gemini-3.5-flash-lite-preview:" in u for u in called_urls)
+
+
+def test_gemini_read_timeout_auto_fallback(monkeypatch):
+    """Testa auto-fallback quando o modelo Gemini lança httpx.ReadTimeout."""
+    import httpx
+    import app.ai as ai
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    ai._ACTIVE_GEMINI_MODEL = None
+
+    called_models = []
+
+    def mock_post(url, **kwargs):
+        model = url.split("/models/")[1].split(":")[0]
+        called_models.append(model)
+        if model == "gemini-3.5-flash-lite":
+            raise httpx.ReadTimeout("The read operation timed out")
+        elif model == "gemini-3.5-flash-lite-preview":
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {
+                "candidates": [{
+                    "content": {"parts": [{"text": "OK"}]}
+                }]
+            }
+            return resp
+        resp = MagicMock()
+        resp.status_code = 404
+        return resp
+
+    with patch("httpx.post", side_effect=mock_post):
+        res = _call_gemini_generate_content(headers={}, payload={})
+        assert res is not None
+        assert res.status_code == 200
+        assert called_models == ["gemini-3.5-flash-lite", "gemini-3.5-flash-lite-preview"]
+        assert ai._ACTIVE_GEMINI_MODEL == "gemini-3.5-flash-lite-preview"
+
+
+def test_search_kabum_offers():
+    """Testa busca estruturada na API v2 da KaBuM!."""
+    mock_api_resp = MagicMock()
+    mock_api_resp.status_code = 200
+    mock_api_resp.json.return_value = {
+        "data": [
+            {
+                "id": "123456",
+                "attributes": {
+                    "title": "Mouse Gamer KaBuM! RGB 12000 DPI",
+                    "price_with_discount": 129.90,
+                },
+            },
+            {
+                "id": "789101",
+                "attributes": {
+                    "title": "Teclado Mecânico KaBuM!",
+                    "price_with_discount": 259.90,
+                },
+            },
+        ]
+    }
+
+    with patch("httpx.get", return_value=mock_api_resp):
+        offers = search_kabum_offers("mouse gamer", limit=2)
+        assert len(offers) == 2
+        assert offers[0]["store"] == "KaBuM!"
+        assert offers[0]["title"] == "Mouse Gamer KaBuM! RGB 12000 DPI"
+        assert offers[0]["price"] == 129.90
+        assert offers[0]["url"] == "https://www.kabum.com.br/produto/123456"
+        assert offers[0]["source"] == "kabum:api"
+
+
+def test_search_amazon_offers():
+    """Testa busca estruturada e parsing da página de resultados da Amazon Brasil."""
+    html_content = """
+    <html>
+      <body>
+        <div data-component-type="s-search-result" data-asin="B08N5WRWNW">
+          <h2><span>Mouse Gamer Logitech G203 RGB</span></h2>
+          <span class="a-price"><span class="a-offscreen">R$ 139,90</span></span>
+        </div>
+      </body>
+    </html>
+    """
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = html_content
+
+    with patch("httpx.get", return_value=mock_resp):
+        offers = search_amazon_offers("mouse gamer", limit=2)
+        assert len(offers) == 1
+        assert offers[0]["store"] == "Amazon"
+        assert offers[0]["title"] == "Mouse Gamer Logitech G203 RGB"
+        assert offers[0]["price"] == 139.90
+        assert offers[0]["url"] == "https://www.amazon.com.br/dp/B08N5WRWNW"
+        assert offers[0]["source"] == "amazon:search"
+
+
+def test_discover_product_links_multi_store_diversification(monkeypatch):
+    """Testa descoberta unificada integrando Shopee, Mercado Livre, KaBuM! e Amazon com diversificação."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    shopee_items = [
+        {"store": "Shopee", "title": "Mouse Shopee 1", "url": "https://shopee.com.br/m1", "price": 99.0, "source": "shopee:api"},
+        {"store": "Shopee", "title": "Mouse Shopee 2", "url": "https://shopee.com.br/m2", "price": 109.0, "source": "shopee:api"},
+    ]
+    ml_items = [
+        {"store": "Mercado Livre", "title": "Mouse ML 1", "url": "https://mercadolivre.com.br/p/MLB1", "price": 115.0, "source": "ml:api"},
+        {"store": "Mercado Livre", "title": "Mouse ML 2", "url": "https://mercadolivre.com.br/p/MLB2", "price": 125.0, "source": "ml:api"},
+    ]
+    kabum_items = [
+        {"store": "KaBuM!", "title": "Mouse KaBuM 1", "url": "https://kabum.com.br/produto/1", "price": 120.0, "source": "kabum:api"},
+        {"store": "KaBuM!", "title": "Mouse KaBuM 2", "url": "https://kabum.com.br/produto/2", "price": 130.0, "source": "kabum:api"},
+    ]
+    amazon_items = [
+        {"store": "Amazon", "title": "Mouse Amazon 1", "url": "https://amazon.com.br/dp/A1", "price": 140.0, "source": "amazon:search"},
+        {"store": "Amazon", "title": "Mouse Amazon 2", "url": "https://amazon.com.br/dp/A2", "price": 150.0, "source": "amazon:search"},
+    ]
+
+    with patch("app.ai.search_shopee_offers", return_value=shopee_items), \
+         patch("app.ai.search_mercadolivre_offers", return_value=ml_items), \
+         patch("app.ai.search_kabum_offers", return_value=kabum_items), \
+         patch("app.ai.search_amazon_offers", return_value=amazon_items):
+
+        res = discover_product_links("Mouse Gamer", max_results=8)
+        results = res["results"]
+        assert len(results) == 8
+
+        # Na 1ª rodada (primeiros 4 itens), deve haver exatamente 1 item de cada uma das 4 lojas
+        first_four_stores = {r["store"] for r in results[:4]}
+        assert first_four_stores == {"Shopee", "Mercado Livre", "KaBuM!", "Amazon"}
+
+        # Na 2ª rodada, deve haver o 2º item de cada loja
+        second_four_stores = {r["store"] for r in results[4:8]}
+        assert second_four_stores == {"Shopee", "Mercado Livre", "KaBuM!", "Amazon"}

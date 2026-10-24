@@ -198,6 +198,22 @@ def extract_mlb_id(url: str) -> str | None:
     return cids[0] if cids else None
 
 
+def _fetch_catalog_html_price(url: str) -> PriceResult | None:
+    """Tenta baixar o HTML público de url do Mercado Livre e extrair o preço."""
+    from .base import HEADERS as DESKTOP_HEADERS
+
+    for hdrs in (DESKTOP_HEADERS, ML_HEADERS):
+        try:
+            r_html = _http_get(url, headers=hdrs, timeout=6, follow_redirects=True)
+            if r_html.status_code == 200 and getattr(r_html, "text", None):
+                html_res = parse(r_html.text)
+                if html_res and html_res.price is not None:
+                    return html_res
+        except Exception as h_exc:
+            log.debug("[ML-API] Falha no fallback HTML com headers para %s: %s", url, h_exc)
+    return None
+
+
 def fetch_from_api(url: str, token: str) -> PriceResult:
     """Consulta a API oficial do Mercado Livre usando os identificadores extraídos da URL."""
     candidate_ids = extract_candidate_ids(url)
@@ -466,19 +482,14 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
 
                             # Passo 7: Fallback de HTML público da página de catálogo (/p/MLB... ou /up/MLBU...)
                             if price is None and ("/p/" in url or "/up/" in url or is_catalog):
-                                try:
-                                    r_html = _http_get(url, headers=ML_HEADERS, timeout=10, follow_redirects=True)
-                                    if r_html.status_code == 200 and getattr(r_html, "text", None):
-                                        html_res = parse(r_html.text)
-                                        if html_res and html_res.price is not None:
-                                            log.info(
-                                                "[ML-API] Preço R$ %.2f obtido via fallback HTML da página de catálogo (%s)",
-                                                html_res.price,
-                                                url,
-                                            )
-                                            return html_res
-                                except Exception as h_exc:
-                                    log.warning("[ML-API] Falha no fallback HTML para catálogo %s: %s", url, h_exc)
+                                html_res = _fetch_catalog_html_price(url)
+                                if html_res and html_res.price is not None:
+                                    log.info(
+                                        "[ML-API] Preço R$ %.2f obtido via fallback HTML da página de catálogo (%s)",
+                                        html_res.price,
+                                        url,
+                                    )
+                                    return html_res
 
                     if price is not None:
                         log.info(
@@ -511,6 +522,16 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
                     log.info("[ML-API] Status HTTP %s para %s", r.status_code, api_url)
             except Exception as exc:
                 log.warning("[ML-API] Erro ao conectar na API (%s): %s", api_url, exc)
+
+    # Se após tentar todas as opções de API não encontrou preço, tenta fallback de HTML público da página
+    html_res = _fetch_catalog_html_price(url)
+    if html_res and html_res.price is not None:
+        log.info(
+            "[ML-API] Preço R$ %.2f obtido via fallback HTML final (%s)",
+            html_res.price,
+            url,
+        )
+        return html_res
 
     error_source = (
         "ml:sem-oferta-ativa"
@@ -645,6 +666,7 @@ def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
                     "url": permalink.strip(),
                     "price": price,
                     "source": "ml:api",
+                    "prod_id": prod_id,
                 }
                 if price is not None:
                     priced_results.append(entry)
@@ -683,6 +705,99 @@ def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
                             unpriced_results.append(entry)
         except Exception as exc:
             log.warning("Erro ao buscar em /sites/MLB/search do Mercado Livre para '%s': %s", keyword, exc)
+
+    # 2.5 Enriquecimento de preços para itens unpriced
+    if unpriced_results and len(priced_results) < 3:
+        to_enrich_count = min(3 - len(priced_results), len(unpriced_results))
+        remaining_unpriced: list[dict] = []
+        for idx, unp in enumerate(unpriced_results):
+            if idx < to_enrich_count:
+                enriched_price = None
+                p_id = unp.get("prod_id") or extract_mlb_id(unp["url"])
+                if p_id:
+                    try:
+                        p_resp = _http_get(f"https://api.mercadolibre.com/products/{p_id}", headers=headers, timeout=5)
+                        if p_resp.status_code == 200:
+                            p_data = p_resp.json()
+                            bb = p_data.get("buy_box_winner")
+                            if isinstance(bb, dict) and bb.get("price") is not None:
+                                enriched_price = parse_brl(bb.get("price"))
+                            elif "pickers" in p_data and isinstance(p_data["pickers"], list):
+                                for picker in p_data["pickers"]:
+                                    for prod in picker.get("products", []):
+                                        prod_bb = prod.get("buy_box_winner")
+                                        if isinstance(prod_bb, dict) and prod_bb.get("price") is not None:
+                                            enriched_price = parse_brl(prod_bb.get("price"))
+                                            break
+                                    if enriched_price is not None:
+                                        break
+                    except Exception as exc:
+                        log.debug("Erro ao consultar /products/%s para enriquecimento: %s", p_id, exc)
+
+                if enriched_price is None:
+                    try:
+                        h_res = _fetch_catalog_html_price(unp["url"])
+                        if h_res and h_res.price is not None:
+                            enriched_price = h_res.price
+                    except Exception as exc:
+                        log.debug("Erro no fallback HTML de enriquecimento para %s: %s", unp["url"], exc)
+
+                if enriched_price is not None:
+                    unp["price"] = enriched_price
+                    unp["source"] = "ml:api-enriched"
+                    if not any(r["url"] == unp["url"] for r in priced_results):
+                        priced_results.append(unp)
+                else:
+                    remaining_unpriced.append(unp)
+            else:
+                remaining_unpriced.append(unp)
+        unpriced_results = remaining_unpriced
+
+    # 3. Fallback: Se não obteve nenhum item com preço, busca no portal público lista.mercadolivre.com.br
+    if not priced_results:
+        skip_pub = "PYTEST_CURRENT_TEST" in os.environ and getattr(httpx.get, "__module__", "") == "httpx"
+        if not skip_pub:
+            try:
+                import urllib.parse
+                from .base import HEADERS as DESKTOP_HEADERS
+
+                slug = urllib.parse.quote_plus(keyword.strip())
+                pub_url = f"https://lista.mercadolivre.com.br/{slug}"
+                r_pub = _http_get(pub_url, headers=DESKTOP_HEADERS, timeout=6, follow_redirects=True)
+                if r_pub.status_code == 200 and getattr(r_pub, "text", None):
+                    soup = BeautifulSoup(r_pub.text, "html.parser")
+                    cards = soup.select(".ui-search-layout__item, .poly-card, li.ui-search-layout__item")
+                    for card in cards:
+                        if len(priced_results) >= limit:
+                            break
+                        title_el = card.select_one(".poly-component__title, .ui-search-item__title, h2")
+                        link_el = card.select_one("a.poly-component__title, a.ui-search-link, a")
+                        if not title_el or not link_el or not link_el.get("href"):
+                            continue
+                        title = title_el.get_text(strip=True)
+                        href = link_el["href"].split("?")[0].strip()
+                        if not href.startswith("http"):
+                            continue
+                        price_el = card.select_one(".andes-money-amount__fraction")
+                        if not price_el:
+                            continue
+                        price_val = price_el.get_text(strip=True)
+                        cents_el = card.select_one(".andes-money-amount__cents")
+                        if cents_el:
+                            price_val += "," + cents_el.get_text(strip=True)
+                        card_price = parse_brl(price_val)
+                        if card_price is not None and title:
+                            entry_pub = {
+                                "store": "Mercado Livre",
+                                "title": title,
+                                "url": href,
+                                "price": card_price,
+                                "source": "ml:public-search",
+                            }
+                            if not any(r["url"] == entry_pub["url"] for r in priced_results):
+                                priced_results.append(entry_pub)
+            except Exception as pub_exc:
+                log.warning("Erro no fallback de busca pública do Mercado Livre: %s", pub_exc)
 
     final_results = list(priced_results)
     for unp in unpriced_results:

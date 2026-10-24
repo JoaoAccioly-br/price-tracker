@@ -312,4 +312,118 @@ def test_search_mercadolivre_offers_catalog_and_fallback():
         assert "pdp_filters=item_id:MLB99887766" in results[1]["url"]
 
 
+def test_search_mercadolivre_offers_enriches_unpriced_catalog_items():
+    """Testa enriquecimento de preço via /products/{prod_id} quando /products/search retorna buy_box_winner null."""
+    def mock_get(req_url, **kwargs):
+        resp = MagicMock()
+        if "/products/search" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "results": [
+                    {
+                        "id": "MLB61776379",
+                        "name": "Catálogo Unpriced",
+                        "permalink": "https://www.mercadolivre.com.br/p/MLB61776379",
+                        "buy_box_winner": None,
+                    }
+                ]
+            }
+            return resp
+        elif "/sites/MLB/search" in req_url:
+            resp.status_code = 403
+            resp.text = "Forbidden"
+            return resp
+        elif "/products/MLB61776379" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "id": "MLB61776379",
+                "buy_box_winner": {
+                    "price": 1399.90,
+                    "status": "active",
+                },
+            }
+            return resp
+        resp.status_code = 404
+        return resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        results = mercadolivre.search_mercadolivre_offers("Ryzen", limit=3)
+        assert len(results) == 1
+        assert results[0]["title"] == "Catálogo Unpriced"
+        assert results[0]["price"] == 1399.90
+        assert results[0]["source"] == "ml:api-enriched"
+
+
+def test_fetch_from_api_html_fallback_when_api_endpoints_404():
+    """Testa fallback de HTML público quando todos os endpoints da API oficial retornam 404."""
+    url = "https://www.mercadolivre.com.br/p/MLB38199035"
+    html_page = """
+    <html>
+      <body>
+        <h1 class="ui-pdp-title">Mouse Delux M900 Pro</h1>
+        <div class="ui-pdp-price__second-line">
+          <span class="andes-money-amount__fraction">189</span>
+          <span class="andes-money-amount__cents">90</span>
+        </div>
+      </body>
+    </html>
+    """
+
+    def mock_get(req_url, **kwargs):
+        resp = MagicMock()
+        if req_url == url:
+            resp.status_code = 200
+            resp.text = html_page
+            return resp
+        # Todos os endpoints de API retornam 404
+        resp.status_code = 404
+        resp.text = "Not found"
+        return resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        res = mercadolivre.fetch_from_api(url, token="test_token")
+        assert res.price == 189.90
+        assert res.available is True
+        assert res.source == "ml:ui-pdp-price"
+        assert "Mouse Delux" in (res.name or "")
+
+
+def test_search_mercadolivre_offers_public_html_fallback():
+    """Testa busca no portal público lista.mercadolivre.com.br quando a API oficial não retorna resultados."""
+    html_listing = """
+    <html>
+      <body>
+        <div class="poly-card">
+          <a class="poly-component__title" href="https://produto.mercadolivre.com.br/MLB-998877-mouse-gamer.html">
+            Mouse Gamer RGB 16000 DPI
+          </a>
+          <span class="andes-money-amount__fraction">249</span>
+          <span class="andes-money-amount__cents">50</span>
+        </div>
+      </body>
+    </html>
+    """
+
+    def mock_get(req_url, **kwargs):
+        resp = MagicMock()
+        if "lista.mercadolivre.com.br" in req_url:
+            resp.status_code = 200
+            resp.text = html_listing
+            return resp
+        # API retorna vazio
+        if "/products/search" in req_url or "/sites/MLB/search" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {"results": []}
+            return resp
+        resp.status_code = 404
+        return resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        results = mercadolivre.search_mercadolivre_offers("mouse gamer", limit=3)
+        assert len(results) == 1
+        assert results[0]["title"] == "Mouse Gamer RGB 16000 DPI"
+        assert results[0]["price"] == 249.50
+        assert results[0]["source"] == "ml:public-search"
+
+
 

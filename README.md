@@ -68,7 +68,7 @@ cp .env.example .env
 | `TELEGRAM_CHAT_ID` | Não | Chat ID global de fallback caso o usuário não informe um chat_id individual. |
 | `TELEGRAM_BOT_USERNAME` | Não | Username do bot sem `@` (descoberto automaticamente via `/getMe` se omitido). |
 | `GEMINI_API_KEY` | Não | Chave gratuita do [Google AI Studio](https://aistudio.google.com/) para habilitar busca inteligente e auto-healing. |
-| `GEMINI_MODEL` | Não | Modelo Gemini a utilizar (padrão: `gemini-3.8-flash`). |
+| `GEMINI_MODEL` | Não | Modelo Gemini a utilizar (padrão: `gemini-3.5-flash-lite`). |
 | `MERCADOLIVRE_CLIENT_ID` | Não | Client ID da sua aplicação no [Mercado Livre Developers](https://developers.mercadolivre.com.br/). |
 | `MERCADOLIVRE_CLIENT_SECRET` | Não | Client Secret da sua aplicação no Mercado Livre. |
 | `MERCADOLIVRE_REFRESH_TOKEN` | Não | Refresh Token inicial do Mercado Livre (o sistema renova automaticamente a cada 6 meses). |

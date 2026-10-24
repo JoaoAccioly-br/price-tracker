@@ -12,8 +12,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .scrapers import scrape
-from .scrapers.base import PriceResult, UnsafeURLError, canonicalize_url, validate_url_host
+from .scrapers import AMAZON_HEADERS, scrape
+from .scrapers.base import PriceResult, UnsafeURLError, canonicalize_url, parse_brl, validate_url_host
 from .scrapers.mercadolivre import search_mercadolivre_offers
 from .scrapers.shopee import search_shopee_offers
 
@@ -46,6 +46,12 @@ def _http_post(url: str, **kwargs):
     return _get_ai_client().post(url, **kwargs)
 
 
+def _http_get(url: str, **kwargs):
+    if getattr(httpx.get, "__module__", "") != "httpx":
+        return httpx.get(url, **kwargs)
+    return _get_ai_client().get(url, **kwargs)
+
+
 def get_gemini_api_key() -> str:
     """Retorna a chave da API do Gemini configurada no ambiente."""
     return (
@@ -56,85 +62,90 @@ def get_gemini_api_key() -> str:
 
 _ACTIVE_GEMINI_MODEL: str | None = None
 FALLBACK_GEMINI_MODELS = [
-    "gemini-3.8-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash-lite-preview",
     "gemini-2.5-flash-lite",
-    "gemini-3-flash-preview",
-    "gemini-2.0-flash",
+    "gemini-3.8-flash",
     "gemini-flash-latest",
 ]
 
 
 def get_gemini_model() -> str:
-    """Retorna o modelo Gemini configurado (padrão: gemini-3.8-flash)."""
+    """Retorna o modelo Gemini configurado (padrão: gemini-3.5-flash-lite)."""
     global _ACTIVE_GEMINI_MODEL
     if _ACTIVE_GEMINI_MODEL:
         return _ACTIVE_GEMINI_MODEL
-    return os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip() or "gemini-3.8-flash"
+    return os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite").strip() or "gemini-3.5-flash-lite"
 
 
 def _call_gemini_generate_content(
     headers: dict,
     payload: dict,
-    timeout: float = 12.0,
+    timeout: float = 8.0,
 ) -> httpx.Response | None:
-    """Executa POST em generateContent com auto-fallback inteligente caso receba status 404."""
+    """Executa POST em generateContent com auto-fallback inteligente caso ocorra erro (404, 429, 500, 503 ou timeout)."""
     global _ACTIVE_GEMINI_MODEL
 
     initial_model = get_gemini_model().removeprefix("models/").strip()
     tried_models: set[str] = set()
 
-    def _do_post(model_name: str) -> httpx.Response:
+    def _do_post(model_name: str) -> httpx.Response | None:
         clean = model_name.removeprefix("models/").strip()
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean}:generateContent"
         return _http_post(url, headers=headers, json=payload, timeout=timeout)
 
     tried_models.add(initial_model)
+    resp = None
     try:
         resp = _do_post(initial_model)
     except Exception as exc:
         log.warning("Erro ao chamar Gemini (%s): %s", initial_model, exc)
-        return None
 
-    if resp.status_code == 200:
+    if resp is not None and resp.status_code == 200:
         return resp
 
-    if resp.status_code == 404:
-        log.warning(
-            "Gemini retornou 404 para modelo '%s' (%s). Iniciando auto-fallback...",
-            initial_model,
-            resp.text[:200],
-        )
-        candidates: list[str] = []
+    should_fallback = (resp is None) or (resp.status_code in (404, 429, 500, 503))
+    if not should_fallback:
+        return resp
 
-        # 1. Sugestão da própria mensagem de erro da API do Google
+    status_desc = resp.status_code if resp is not None else "timeout/exception"
+    log.warning(
+        "Gemini falhou com status %s para modelo '%s'. Iniciando auto-fallback...",
+        status_desc,
+        initial_model,
+    )
+    candidates: list[str] = []
+
+    # 1. Sugestão da própria mensagem de erro da API do Google
+    if resp is not None and getattr(resp, "text", None):
         m = re.search(r"use\s+(?:models/)?([a-zA-Z0-9._-]+)", resp.text, re.IGNORECASE)
         if m:
             suggested = m.group(1).removeprefix("models/").strip()
             if suggested and suggested not in tried_models:
                 candidates.append(suggested)
 
-        # 2. Lista de modelos de fallback em ordem
-        for fb in FALLBACK_GEMINI_MODELS:
-            clean_fb = fb.removeprefix("models/").strip()
-            if clean_fb not in tried_models and clean_fb not in candidates:
-                candidates.append(clean_fb)
+    # 2. Lista de modelos de fallback em ordem
+    for fb in FALLBACK_GEMINI_MODELS:
+        clean_fb = fb.removeprefix("models/").strip()
+        if clean_fb not in tried_models and clean_fb not in candidates:
+            candidates.append(clean_fb)
 
-        for cand in candidates:
-            tried_models.add(cand)
-            try:
-                cand_resp = _do_post(cand)
-                if cand_resp.status_code == 200:
-                    log.info("Auto-fallback do Gemini bem-sucedido: '%s' -> '%s'", initial_model, cand)
-                    _ACTIVE_GEMINI_MODEL = cand
-                    return cand_resp
-                log.warning(
-                    "Fallback Gemini '%s' retornou HTTP %d: %s",
-                    cand,
-                    cand_resp.status_code,
-                    cand_resp.text[:200],
-                )
-            except Exception as exc:
-                log.warning("Erro ao tentar fallback Gemini com '%s': %s", cand, exc)
+    for cand in candidates:
+        tried_models.add(cand)
+        try:
+            cand_resp = _do_post(cand)
+            if cand_resp is not None and cand_resp.status_code == 200:
+                log.info("Auto-fallback do Gemini bem-sucedido: '%s' -> '%s'", initial_model, cand)
+                _ACTIVE_GEMINI_MODEL = cand
+                return cand_resp
+            sc = cand_resp.status_code if cand_resp is not None else "timeout"
+            log.warning(
+                "Fallback Gemini '%s' retornou HTTP %s",
+                cand,
+                sc,
+            )
+        except Exception as exc:
+            log.warning("Erro ao tentar fallback Gemini com '%s': %s", cand, exc)
 
     return resp
 
@@ -250,14 +261,173 @@ def _gemini_grounded_search(
     return valid_results
 
 
+def search_kabum_offers(keyword: str, limit: int = 3) -> list[dict]:
+    """Busca ofertas na KaBuM! via API pública de catálogo v2 com fallback HTML."""
+    if not keyword or not keyword.strip():
+        return []
+    if "PYTEST_CURRENT_TEST" in os.environ and getattr(httpx.get, "__module__", "") == "httpx":
+        return []
+
+    import urllib.parse
+
+    encoded_kw = urllib.parse.quote_plus(keyword.strip())
+    results: list[dict] = []
+
+    # 1. API pública v2 de catálogo
+    try:
+        api_url = (
+            f"https://servicespub.prod.api.aws.grupokabum.com.br/catalog/v2/products?"
+            f"query={encoded_kw}&page_number=1&page_size={limit}&facet_filters=&sort=most_searched"
+        )
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json",
+        }
+        r = _http_get(api_url, headers=headers, timeout=6.0)
+        if r.status_code == 200:
+            data = r.json()
+            items = data.get("data", []) if isinstance(data, dict) else []
+            for item in items:
+                prod_id = item.get("id") or item.get("code")
+                attrs = item.get("attributes", {})
+                title = attrs.get("title") or item.get("title")
+                if not prod_id or not title:
+                    continue
+                raw_price = attrs.get("price_with_discount") or attrs.get("price") or item.get("price")
+                price = parse_brl(raw_price) if raw_price is not None else None
+                url = f"https://www.kabum.com.br/produto/{prod_id}"
+                results.append({
+                    "store": "KaBuM!",
+                    "title": title.strip(),
+                    "url": url,
+                    "price": price,
+                    "source": "kabum:api",
+                })
+                if len(results) >= limit:
+                    return results
+    except Exception as exc:
+        log.debug("Erro na API da KaBuM!: %s", exc)
+
+    # 2. Fallback HTML se a API não retornou resultados
+    if not results:
+        try:
+            from bs4 import BeautifulSoup
+
+            search_url = f"https://www.kabum.com.br/busca/{encoded_kw}"
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            }
+            r = _http_get(search_url, headers=headers, timeout=6.0, follow_redirects=True)
+            if r.status_code == 200 and getattr(r, "text", None):
+                soup = BeautifulSoup(r.text, "html.parser")
+                cards = soup.select("article.productCard, .productCard, a[href*='/produto/']")
+                seen_urls = set()
+                for card in cards:
+                    link_el = card if card.name == "a" else card.select_one("a[href*='/produto/']")
+                    if not link_el or not link_el.get("href"):
+                        continue
+                    href = link_el["href"]
+                    if not href.startswith("http"):
+                        href = f"https://www.kabum.com.br{href}"
+                    href = href.split("?")[0]
+                    if href in seen_urls:
+                        continue
+                    seen_urls.add(href)
+                    title_el = card.select_one(".nameCard, h2, span.nameCard")
+                    title = title_el.get_text(strip=True) if title_el else ""
+                    price_el = card.select_one(".priceCard, span.priceCard")
+                    price = parse_brl(price_el.get_text(strip=True)) if price_el else None
+                    if title:
+                        results.append({
+                            "store": "KaBuM!",
+                            "title": title,
+                            "url": href,
+                            "price": price,
+                            "source": "kabum:search",
+                        })
+                        if len(results) >= limit:
+                            break
+        except Exception as exc:
+            log.debug("Erro no fallback HTML da KaBuM!: %s", exc)
+
+    return results[:limit]
+
+
+def search_amazon_offers(keyword: str, limit: int = 3) -> list[dict]:
+    """Busca ofertas na Amazon Brasil via busca pública e parse dos resultados com ASIN."""
+    if not keyword or not keyword.strip():
+        return []
+    if "PYTEST_CURRENT_TEST" in os.environ and getattr(httpx.get, "__module__", "") == "httpx":
+        return []
+
+    import urllib.parse
+    from bs4 import BeautifulSoup
+
+    results: list[dict] = []
+    try:
+        encoded_kw = urllib.parse.quote_plus(keyword.strip())
+        url = f"https://www.amazon.com.br/s?k={encoded_kw}"
+        r = _http_get(url, headers=AMAZON_HEADERS, timeout=6.0, follow_redirects=True)
+        if r.status_code == 200 and getattr(r, "text", None):
+            soup = BeautifulSoup(r.text, "html.parser")
+            cards = soup.select('div[data-component-type="s-search-result"]')
+            seen_asins = set()
+            for card in cards:
+                asin = card.get("data-asin", "").strip()
+                if not asin or asin in seen_asins:
+                    continue
+                seen_asins.add(asin)
+
+                title_el = card.select_one("h2 span") or card.select_one("h2")
+                title = title_el.get_text(strip=True) if title_el else ""
+                if not title:
+                    continue
+
+                price = None
+                offscreen = card.select_one(".a-price .a-offscreen")
+                if offscreen:
+                    price = parse_brl(offscreen.get_text(strip=True))
+                if price is None:
+                    whole = card.select_one(".a-price-whole")
+                    fraction = card.select_one(".a-price-fraction")
+                    if whole:
+                        val = whole.get_text(strip=True)
+                        if fraction:
+                            val += "," + fraction.get_text(strip=True)
+                        price = parse_brl(val)
+
+                item_url = f"https://www.amazon.com.br/dp/{asin}"
+                results.append({
+                    "store": "Amazon",
+                    "title": title,
+                    "url": item_url,
+                    "price": price,
+                    "source": "amazon:search",
+                })
+                if len(results) >= limit:
+                    break
+    except Exception as exc:
+        log.debug("Erro na busca da Amazon: %s", exc)
+
+    return results[:limit]
+
+
 def _gemini_filter_and_rank(
     candidates: list[dict],
     product_name: str,
     category: str = "Notebook",
+    force_heuristic: bool = False,
 ) -> list[dict]:
     """Utiliza o Gemini para eliminar acessórios e classificar a relevância dos links."""
     api_key = get_gemini_api_key()
-    if api_key and candidates:
+    if api_key and candidates and not force_heuristic:
         items_desc = []
         for i, c in enumerate(candidates):
             price_str = f" - R$ {c['price']:.2f}" if c.get("price") else ""
@@ -286,7 +456,7 @@ def _gemini_filter_and_rank(
         headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
 
         try:
-            resp = _call_gemini_generate_content(headers=headers, payload=payload, timeout=12.0)
+            resp = _call_gemini_generate_content(headers=headers, payload=payload, timeout=8.0)
             if resp is not None and resp.status_code == 200:
                 body = resp.json()
                 cand_first = (body.get("candidates") or [{}])[0]
@@ -387,7 +557,7 @@ def discover_product_links(
     # 1. Shopee Oficial
     if not clean_store or "shopee" in clean_store:
         try:
-            shopee_offers = search_shopee_offers(product_name, limit=6)
+            shopee_offers = search_shopee_offers(product_name, limit=4)
             candidates.extend(shopee_offers)
         except Exception as exc:
             log.warning("Erro ao buscar Shopee: %s", exc)
@@ -395,21 +565,48 @@ def discover_product_links(
     # 2. Mercado Livre Oficial
     if not clean_store or "mercado" in clean_store or "ml" in clean_store:
         try:
-            ml_offers = search_mercadolivre_offers(product_name, limit=6)
+            ml_offers = search_mercadolivre_offers(product_name, limit=4)
             candidates.extend(ml_offers)
         except Exception as exc:
             log.warning("Erro ao buscar Mercado Livre: %s", exc)
 
-    # 3. Google Search Grounding via Gemini (para Amazon, KaBuM, Magalu, etc.)
+    # 3. KaBuM!
+    if not clean_store or "kabum" in clean_store:
+        try:
+            kabum_offers = search_kabum_offers(product_name, limit=3)
+            candidates.extend(kabum_offers)
+        except Exception as exc:
+            log.warning("Erro ao buscar KaBuM!: %s", exc)
+
+    # 4. Amazon
+    if not clean_store or "amazon" in clean_store:
+        try:
+            amazon_offers = search_amazon_offers(product_name, limit=3)
+            candidates.extend(amazon_offers)
+        except Exception as exc:
+            log.warning("Erro ao buscar Amazon: %s", exc)
+
+    # 5. Google Search Grounding via Gemini (apenas se necessário para economizar cota)
     api_key = get_gemini_api_key()
-    if api_key and (not clean_store or clean_store not in ("shopee", "mercado livre", "mercadolivre") or len(candidates) < 3):
+    unique_stores = {c.get("store") for c in candidates if c.get("store")}
+    should_call_grounding = False
+    if api_key:
+        if clean_store and not candidates:
+            should_call_grounding = True
+        elif not clean_store and len(unique_stores) < 3:
+            should_call_grounding = True
+
+    grounding_called = False
+    if should_call_grounding:
         try:
             grounded = _gemini_grounded_search(product_name, category, target_store)
-            candidates.extend(grounded)
+            if grounded:
+                candidates.extend(grounded)
+            grounding_called = True
         except Exception as exc:
             log.warning("Erro ao buscar no Gemini Grounding: %s", exc)
 
-    # 4. Deduplicação e exclusão
+    # 6. Deduplicação e exclusão
     deduped: list[dict] = []
     seen_keys: set[str] = set(exclude_set)
     for c in candidates:
@@ -421,8 +618,10 @@ def discover_product_links(
             seen_keys.add(canon)
             deduped.append(c)
 
-    # 5. Curadoria e Ranking com Gemini ou Heurística
-    results = _gemini_filter_and_rank(deduped, product_name, category)
+    # 7. Curadoria e Ranking com Gemini ou Heurística
+    # Economia de cota: se grounding já foi chamado nesta execução, usa filtragem heurística direta
+    use_heuristic = grounding_called or not api_key
+    results = _gemini_filter_and_rank(deduped, product_name, category, force_heuristic=use_heuristic)
 
     return {
         "ai_used": bool(api_key),
