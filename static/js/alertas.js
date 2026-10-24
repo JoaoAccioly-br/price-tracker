@@ -7,6 +7,13 @@ let editingProduct = null;
 function renderAlertasView() {
   const container = document.getElementById('rules-list-container');
   const countEl = document.getElementById('alertas-rules-count');
+
+  updateTelegramStatusBadge();
+  const step1Text = document.getElementById('tg-step-1-text');
+  if (step1Text && typeof formatTelegramStep1Text === 'function') {
+    step1Text.innerHTML = formatTelegramStep1Text(currentUser);
+  }
+
   if (!container) return;
 
   const rulesWithTarget = productsData.filter(p => p.target_price != null);
@@ -62,7 +69,7 @@ function renderAlertasView() {
         </div>
 
         <div class="rule-card-right">
-          <span class="channel-tag">E-mail</span>
+          <span class="channel-tag"><i class="fa-brands fa-telegram" style="color: #229ED9"></i> Telegram</span>
           ${statusPill}
           <button class="rule-edit-btn" title="Editar regra" onclick="openEditRuleModal(${p.id})">
             <i class="fa-solid fa-pen"></i>
@@ -414,10 +421,173 @@ async function handleDeleteRule() {
   }
 }
 
+// ==========================================
+// CONFIGURAÇÃO DO CANAL TELEGRAM
+// ==========================================
+
+function updateTelegramStatusBadge() {
+  const badge = document.getElementById('telegram-channel-status');
+  if (!badge) return;
+
+  if (currentUser && currentUser.telegram_chat_id) {
+    badge.className = 'badge-conectado';
+    badge.textContent = `Conectado (ID: ${currentUser.telegram_chat_id})`;
+  } else {
+    badge.className = 'badge-pendente';
+    badge.textContent = 'Não configurado';
+  }
+}
+
+function formatTelegramStep1Text(user) {
+  if (user && user.bot_username) {
+    const cleanBot = String(user.bot_username).trim().replace(/^@/, '');
+    return `Abra o nosso bot oficial <a href="https://t.me/${escapeHtml(cleanBot)}" target="_blank" rel="noopener noreferrer"><b>@${escapeHtml(cleanBot)}</b> <i class="fa-solid fa-arrow-up-right-from-square" style="font-size: 10px;"></i></a> no Telegram e clique em <b>Começar (<code>/start</code>)</b> para autorizar o envio de alertas.`;
+  }
+  if (user && user.bot_configured === false) {
+    return `O administrador ainda não configurou o <code>TELEGRAM_BOT_TOKEN</code> no arquivo <code>.env</code> do servidor.`;
+  }
+  return `Abra o Telegram, procure pelo bot oficial do sistema e clique em <b>Começar (<code>/start</code>)</b> (isso autoriza o bot a te enviar mensagens).`;
+}
+
+async function openTelegramModal() {
+  const modal = document.getElementById('modal-telegram-config');
+  const input = document.getElementById('telegram-chat-id-input');
+  const feedback = document.getElementById('telegram-config-feedback');
+  const step1Text = document.getElementById('tg-step-1-text');
+
+  if (currentUser && !currentUser.bot_username && typeof api === 'function') {
+    try {
+      const fresh = await api('/api/auth/me');
+      if (fresh) currentUser = { ...currentUser, ...fresh };
+    } catch (err) {}
+  }
+
+  if (step1Text) {
+    step1Text.innerHTML = formatTelegramStep1Text(currentUser);
+  }
+
+  if (input) {
+    input.value = (currentUser && currentUser.telegram_chat_id) ? currentUser.telegram_chat_id : '';
+  }
+  if (feedback) {
+    feedback.textContent = '';
+    feedback.className = 'tg-feedback-box hidden';
+  }
+  if (modal) {
+    modal.classList.remove('hidden');
+  }
+}
+
+function closeTelegramModal() {
+  const modal = document.getElementById('modal-telegram-config');
+  if (modal) {
+    modal.classList.add('hidden');
+  }
+}
+
+async function handleSaveTelegramConfig(e) {
+  e.preventDefault();
+  const input = document.getElementById('telegram-chat-id-input');
+  const feedback = document.getElementById('telegram-config-feedback');
+  const saveBtn = document.getElementById('btn-save-telegram');
+
+  const val = input ? input.value.trim() : '';
+
+  if (feedback) {
+    feedback.textContent = '';
+    feedback.className = 'tg-feedback-box hidden';
+  }
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Salvando…';
+  }
+
+  try {
+    const res = await api('/api/auth/telegram', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telegram_chat_id: val || null }),
+    });
+
+    if (currentUser) {
+      currentUser.telegram_chat_id = (res && res.telegram_chat_id !== undefined) ? res.telegram_chat_id : (val || null);
+    }
+    updateTelegramStatusBadge();
+
+    if (feedback) {
+      feedback.textContent = val
+        ? 'Chat ID salvo com sucesso! Agora você pode enviar uma mensagem de teste para confirmar.'
+        : 'Chat ID removido com sucesso. Alertas via Telegram desativados.';
+      feedback.className = 'tg-feedback-box success';
+    }
+  } catch (err) {
+    if (feedback) {
+      feedback.textContent = err.message || 'Erro ao salvar Chat ID. Verifique os dados informados.';
+      feedback.className = 'tg-feedback-box error';
+    }
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Salvar Chat ID';
+    }
+  }
+}
+
+async function handleTestTelegram() {
+  const input = document.getElementById('telegram-chat-id-input');
+  const feedback = document.getElementById('telegram-config-feedback');
+  const testBtn = document.getElementById('btn-test-telegram');
+
+  const currentChatId = input ? input.value.trim() : (currentUser ? currentUser.telegram_chat_id : '');
+  if (!currentChatId) {
+    if (feedback) {
+      feedback.textContent = 'Informe e salve seu Chat ID antes de enviar uma mensagem de teste.';
+      feedback.className = 'tg-feedback-box error';
+    }
+    return;
+  }
+
+  if (feedback) {
+    feedback.textContent = '';
+    feedback.className = 'tg-feedback-box hidden';
+  }
+
+  if (testBtn) {
+    testBtn.disabled = true;
+    const span = testBtn.querySelector('span');
+    if (span) span.textContent = 'Enviando…';
+  }
+
+  try {
+    const res = await api('/api/auth/telegram/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (feedback) {
+      feedback.textContent = (res && res.message) ? res.message : 'Mensagem de teste enviada com sucesso! Verifique seu Telegram.';
+      feedback.className = 'tg-feedback-box success';
+    }
+  } catch (err) {
+    if (feedback) {
+      feedback.textContent = err.message || 'Falha ao enviar teste. Verifique se o Chat ID está correto e se você deu /start no bot.';
+      feedback.className = 'tg-feedback-box error';
+    }
+  } finally {
+    if (testBtn) {
+      testBtn.disabled = false;
+      const span = testBtn.querySelector('span');
+      if (span) span.textContent = 'Enviar mensagem de teste';
+    }
+  }
+}
+
 // FECHAR MODAIS AO PRESSIONAR ESC
 window.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeRuleModal();
     closeEditRuleModal();
+    closeTelegramModal();
   }
 });

@@ -38,17 +38,14 @@
 
       <div class="canais-list">
         <div class="canal-row">
-          <span>E-mail</span>
-          <span class="badge-conectado">Conectado</span>
-        </div>
-        <div class="canal-row">
-          <span>Telegram</span>
-          <span class="badge-conectado">Conectado</span>
+          <span><i class="fa-brands fa-telegram" style="color: #229ED9; margin-right: 6px;"></i>Telegram Bot</span>
+          <span id="telegram-channel-status" class="badge-pendente">Não configurado</span>
         </div>
       </div>
 
-      <button class="btn-outline" style="width: 100%; justify-content: center; margin-top: 16px" onclick="alert('Configuração de canais disponível em breve')">
-        Adicionar canal
+      <button type="button" class="btn-outline" style="width: 100%; justify-content: center; margin-top: 16px" onclick="openTelegramModal()">
+        <i class="fa-brands fa-telegram" style="color: #229ED9"></i>
+        <span>Configurar Telegram</span>
       </button>
     </div>
   </div>
@@ -229,6 +226,76 @@
         <div style="display:flex; gap:10px">
           <button type="button" class="btn-outline" onclick="closeEditRuleModal()">Cancelar</button>
           <button type="submit" class="btn-primary">Salvar alterações</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- MODAL: CONFIGURAÇÃO DO TELEGRAM -->
+<div class="modal-backdrop hidden" id="modal-telegram-config" onclick="if(event.target === this) closeTelegramModal()">
+  <div class="modal-content modal-tg-content">
+    <div class="modal-header">
+      <div>
+        <div style="display:flex; align-items:center; gap:8px">
+          <i class="fa-brands fa-telegram" style="color: #229ED9; font-size: 20px"></i>
+          <h3>Alertas via Telegram</h3>
+        </div>
+        <p>Receba avisos instantâneos no seu celular quando um notebook atingir o preço alvo.</p>
+      </div>
+      <button type="button" class="modal-close" onclick="closeTelegramModal()" title="Fechar">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <!-- MINI-MANUAL PASSO A PASSO -->
+    <div class="tg-guide-steps">
+      <div class="tg-step-item">
+        <div class="tg-step-num">1</div>
+        <div class="tg-step-body">
+          <strong>Passo 1 — Ative o Bot de Alertas</strong>
+          <p id="tg-step-1-text">Abra o Telegram, procure pelo bot oficial do sistema e clique em <b>Começar (<code>/start</code>)</b> (isso autoriza o bot a te enviar mensagens).</p>
+        </div>
+      </div>
+
+      <div class="tg-step-item">
+        <div class="tg-step-num">2</div>
+        <div class="tg-step-body">
+          <strong>Passo 2 — Descubra seu Chat ID</strong>
+          <p>No Telegram, abra o bot verificador <a href="https://t.me/userinfobot" target="_blank" rel="noopener noreferrer"><b>@userinfobot</b></a> (ou <code>@RawDataBot</code>) e clique em <b>Começar</b>. Ele responderá na hora com o seu número <b><code>Id</code></b> (ex.: <code>123456789</code>).</p>
+        </div>
+      </div>
+
+      <div class="tg-step-item">
+        <div class="tg-step-num">3</div>
+        <div class="tg-step-body">
+          <strong>Passo 3 — Salve e Faça o Teste</strong>
+          <p>Cole apenas os números no campo abaixo, clique em <b>Salvar Chat ID</b> e depois em <b>Enviar mensagem de teste</b> para confirmar no seu celular/PC!</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- FORMULÁRIO COM INPUT CHAT ID -->
+    <form id="f-telegram-config" onsubmit="handleSaveTelegramConfig(event)" style="margin-top: 20px">
+      <div class="form-group">
+        <label for="telegram-chat-id-input">Seu Telegram Chat ID</label>
+        <div class="input-with-prefix">
+          <span class="prefix"><i class="fa-brands fa-telegram" style="color: #229ED9"></i></span>
+          <input type="text" id="telegram-chat-id-input" name="telegram_chat_id" placeholder="Ex.: 123456789" autocomplete="off">
+        </div>
+        <div class="field-hint">Apenas números. Deixe em branco se quiser remover o Chat ID.</div>
+      </div>
+
+      <div id="telegram-config-feedback" class="tg-feedback-box hidden"></div>
+
+      <div class="modal-actions-between" style="margin-top: 18px">
+        <button type="button" class="btn-outline" id="btn-test-telegram" onclick="handleTestTelegram()">
+          <i class="fa-solid fa-paper-plane" style="color: #229ED9"></i>
+          <span>Enviar mensagem de teste</span>
+        </button>
+        <div style="display:flex; gap:10px">
+          <button type="button" class="btn-outline" onclick="closeTelegramModal()">Cancelar</button>
+          <button type="submit" class="btn-primary" id="btn-save-telegram">Salvar Chat ID</button>
         </div>
       </div>
     </form>

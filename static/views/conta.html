@@ -1,0 +1,309 @@
+<!-- VIEW: MINHA CONTA (PADRÃO D·ROSA) -->
+<div class="conta-layout">
+  <!-- COLUNA 1: DADOS DO PERFIL & TELEGRAM -->
+  <div class="content-card">
+    <div class="profile-header-card">
+      <div class="profile-avatar-lg" id="profile-avatar-lg">U</div>
+      <div class="profile-header-info">
+        <h4 id="profile-display-name">Carregando…</h4>
+        <p id="profile-display-email">usuario@exemplo.com</p>
+      </div>
+    </div>
+
+    <form id="form-profile-data" onsubmit="handleProfileDataSubmit(event)">
+      <div class="form-group">
+        <label for="profile-name">Nome Completo</label>
+        <div class="input-with-prefix">
+          <span class="prefix"><i class="fa-solid fa-user"></i></span>
+          <input type="text" id="profile-name" name="name" required minlength="2" placeholder="Seu nome completo" autocomplete="name">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="profile-email">E-mail</label>
+        <div class="input-with-prefix">
+          <span class="prefix"><i class="fa-solid fa-envelope"></i></span>
+          <input type="email" id="profile-email" name="email" required placeholder="seu@email.com" autocomplete="email">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="profile-telegram">
+          Telegram Chat ID <span class="label-optional">(opcional)</span>
+        </label>
+        <div class="input-with-prefix">
+          <span class="prefix"><i class="fa-brands fa-telegram" style="color: #229ED9"></i></span>
+          <input type="text" id="profile-telegram" name="telegram_chat_id" placeholder="Ex.: 123456789" autocomplete="off">
+        </div>
+        <div class="field-aux-actions">
+          <button type="button" class="btn-aux-text" onclick="openTelegramHelpModal()">
+            <i class="fa-solid fa-circle-question"></i> Como descobrir meu Chat ID?
+          </button>
+          <button type="button" class="btn-aux-text" id="btn-conta-test-telegram" onclick="handleContaTelegramTest()" style="margin-left: auto;">
+            <i class="fa-solid fa-paper-plane" style="color: #229ED9"></i> Testar envio
+          </button>
+        </div>
+      </div>
+
+      <!-- Feedback de Sucesso/Erro -->
+      <div id="profile-data-feedback" class="tg-feedback-box hidden"></div>
+
+      <div class="modal-actions">
+        <button type="submit" class="btn-primary" id="btn-save-profile">
+          <i class="fa-solid fa-floppy-disk"></i>
+          <span>Salvar Alterações</span>
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- COLUNA 2: SEGURANÇA E SENHA -->
+  <div class="content-card">
+    <div class="profile-header-card">
+      <div class="profile-icon-lg">
+        <i class="fa-solid fa-shield-halved"></i>
+      </div>
+      <div class="profile-header-info">
+        <h4>Segurança e Senha</h4>
+        <p>Altere sua senha de acesso à conta</p>
+      </div>
+    </div>
+
+    <form id="form-profile-password" onsubmit="handleProfilePasswordSubmit(event)">
+      <div class="form-group" id="group-current-password">
+        <label for="profile-current-password">Senha Atual</label>
+        <div class="input-with-prefix">
+          <span class="prefix"><i class="fa-solid fa-lock"></i></span>
+          <input type="password" id="profile-current-password" name="current_password" required placeholder="Digite sua senha atual" autocomplete="current-password">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="profile-new-password">Nova Senha</label>
+        <div class="input-with-prefix">
+          <span class="prefix"><i class="fa-solid fa-key"></i></span>
+          <input type="password" id="profile-new-password" name="new_password" required minlength="6" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="profile-confirm-password">Confirmar Nova Senha</label>
+        <div class="input-with-prefix">
+          <span class="prefix"><i class="fa-solid fa-check-double"></i></span>
+          <input type="password" id="profile-confirm-password" name="confirm_password" required minlength="6" placeholder="Repita a nova senha" autocomplete="new-password">
+        </div>
+      </div>
+
+      <!-- Feedback de Sucesso/Erro -->
+      <div id="profile-password-feedback" class="tg-feedback-box hidden"></div>
+
+      <div class="modal-actions">
+        <button type="submit" class="btn-primary" id="btn-save-password">
+          <i class="fa-solid fa-key"></i>
+          <span>Atualizar Senha</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- CARD DA EXTENSÃO DE NAVEGADOR -->
+<div class="content-card extension-full-card" style="margin-top: 24px;">
+  <div class="profile-header-card" style="margin-bottom: 16px;">
+    <div class="profile-icon-lg" style="background: #fae9e9; color: var(--accent-red);">
+      <i class="fa-solid fa-puzzle-piece"></i>
+    </div>
+    <div class="profile-header-info">
+      <h4>Extensão do Navegador (Captura em 1 Clique)</h4>
+      <p>Adicione produtos e links de lojas diretamente pelo seu navegador enquanto navega na internet.</p>
+    </div>
+  </div>
+
+  <p style="font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 16px;">
+    Monitore ofertas em tempo real direto da página de qualquer loja compatível (Amazon, Mercado Livre, Shopee, Kabum e AliExpress) com 1 único clique. Baixe o pacote compactado abaixo e carregue no seu navegador em modo desenvolvedor.
+  </p>
+
+  <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+    <a href="/api/extension/download" download="price-tracker-extension.zip" class="btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 8px;">
+      <i class="fa-solid fa-download"></i>
+      <span>Baixar Extensão (.zip)</span>
+    </a>
+    <button type="button" class="btn-outline" id="btn-generate-ext-token" onclick="handleGenerateExtensionToken()" style="display: inline-flex; align-items: center; gap: 8px;">
+      <i class="fa-solid fa-key"></i>
+      <span>Gerar e Copiar Token da Extensão</span>
+    </button>
+    <button type="button" class="btn-outline" onclick="openExtensionHelpModal()" style="display: inline-flex; align-items: center; gap: 6px;">
+      <i class="fa-solid fa-circle-question"></i>
+      <span>Como Instalar (Passo a Passo)</span>
+    </button>
+    <div style="flex: 1; min-width: 260px; max-width: 380px;">
+      <input type="text" id="extension-token-input" readonly placeholder="O token gerado aparecerá aqui…" style="width: 100%; font-family: monospace; font-size: 12.5px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--input-border); background: #fdfaf9; cursor: pointer;" onclick="this.select()" title="Clique para selecionar">
+    </div>
+  </div>
+
+  <div id="extension-token-feedback" class="tg-feedback-box hidden" style="margin-top: 14px;"></div>
+
+  <!-- Mini Guia em 4 Passos no Card -->
+  <div class="ext-quick-steps" style="margin-top: 20px; padding-top: 18px; border-top: 1px solid #f4e6e6;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+      <span style="font-size: 13px; font-weight: 700; color: var(--text-title); display: flex; align-items: center; gap: 6px;">
+        <i class="fa-solid fa-list-check" style="color: var(--accent-red);"></i> Instalação Rápida em 4 Passos:
+      </span>
+      <button type="button" onclick="openExtensionHelpModal()" style="font-size: 12px; font-weight: 600; color: var(--accent-red); text-decoration: underline; background: none; border: none; cursor: pointer; padding: 0;">
+        Ver detalhes e instruções completas
+      </button>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px;">
+      <div style="background: #faf7f7; border: 1px solid #f0e6e6; border-radius: 10px; padding: 12px;">
+        <div style="font-size: 12.5px; font-weight: 800; color: var(--accent-red); margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+          <span style="background: var(--accent-red); color: #fff; width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 10.5px;">1</span>
+          Baixar e Extrair
+        </div>
+        <div style="font-size: 12px; color: var(--text-muted); line-height: 1.45;">Baixe o <code>.zip</code> e extraia a pasta <code>price-tracker-extension</code> no seu computador.</div>
+      </div>
+      <div style="background: #faf7f7; border: 1px solid #f0e6e6; border-radius: 10px; padding: 12px;">
+        <div style="font-size: 12.5px; font-weight: 800; color: var(--accent-red); margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+          <span style="background: var(--accent-red); color: #fff; width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 10.5px;">2</span>
+          Abrir Extensões
+        </div>
+        <div style="font-size: 12px; color: var(--text-muted); line-height: 1.45;">No Chrome, Edge ou Brave, acesse <code>chrome://extensions</code> na barra de endereços.</div>
+      </div>
+      <div style="background: #faf7f7; border: 1px solid #f0e6e6; border-radius: 10px; padding: 12px;">
+        <div style="font-size: 12.5px; font-weight: 800; color: var(--accent-red); margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+          <span style="background: var(--accent-red); color: #fff; width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 10.5px;">3</span>
+          Carregar Pasta
+        </div>
+        <div style="font-size: 12px; color: var(--text-muted); line-height: 1.45;">Ative o <b>Modo do desenvolvedor</b> e clique em <b>Carregar sem compactação</b>.</div>
+      </div>
+      <div style="background: #faf7f7; border: 1px solid #f0e6e6; border-radius: 10px; padding: 12px;">
+        <div style="font-size: 12.5px; font-weight: 800; color: var(--accent-red); margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+          <span style="background: var(--accent-red); color: #fff; width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 10.5px;">4</span>
+          Conectar e Usar
+        </div>
+        <div style="font-size: 12px; color: var(--text-muted); line-height: 1.45;">Cole o Token na extensão e salve produtos das lojas suportadas em 1 clique!</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CARD DE SESSÃO ATIVA (ABAIXO DOS DOIS CARDS) -->
+<div class="content-card session-full-card" style="margin-top: 24px;">
+  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+    <div>
+      <h4 style="font-size: 15px; font-weight: 700; color: var(--text-title); margin-bottom: 3px;">Sessão Ativa</h4>
+      <p style="font-size: 13px; color: var(--text-muted);">Encerre o acesso à sua conta neste navegador quando terminar.</p>
+    </div>
+    <button type="button" class="btn-outline" onclick="openLogoutModal()" style="color: var(--accent-red); border-color: #ebd7d7;">
+      <i class="fa-solid fa-right-from-bracket"></i>
+      <span>Sair da Conta</span>
+    </button>
+  </div>
+</div>
+
+<!-- MODAL: AJUDA CONFIGURAÇÃO TELEGRAM -->
+<div class="modal-backdrop hidden" id="modal-telegram-help" onclick="if(event.target === this) closeTelegramHelpModal()">
+  <div class="modal-content modal-tg-content">
+    <div class="modal-header">
+      <div>
+        <div style="display:flex; align-items:center; gap:8px">
+          <i class="fa-brands fa-telegram" style="color: #229ED9; font-size: 20px"></i>
+          <h3>Como descobrir seu Chat ID</h3>
+        </div>
+        <p>Siga os 3 passos simples abaixo para conectar seus alertas no Telegram.</p>
+      </div>
+      <button type="button" class="modal-close" onclick="closeTelegramHelpModal()" title="Fechar">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <div class="tg-guide-steps">
+      <div class="tg-step-item">
+        <div class="tg-step-num">1</div>
+        <div class="tg-step-body">
+          <strong>Passo 1 — Ative o Bot de Alertas</strong>
+          <p id="tg-help-step-1-text">Abra o Telegram, procure pelo bot oficial do sistema e clique em <b>Começar (<code>/start</code>)</b> (isso autoriza o bot a te enviar mensagens).</p>
+        </div>
+      </div>
+
+      <div class="tg-step-item">
+        <div class="tg-step-num">2</div>
+        <div class="tg-step-body">
+          <strong>Passo 2 — Descubra seu Chat ID</strong>
+          <p>No Telegram, abra o bot verificador <a href="https://t.me/userinfobot" target="_blank" rel="noopener noreferrer"><b>@userinfobot</b></a> (ou <code>@RawDataBot</code>) e clique em <b>Começar</b>. Ele responderá na hora com o seu número <b><code>Id</code></b> (ex.: <code>123456789</code>).</p>
+        </div>
+      </div>
+
+      <div class="tg-step-item">
+        <div class="tg-step-num">3</div>
+        <div class="tg-step-body">
+          <strong>Passo 3 — Salve e Faça o Teste</strong>
+          <p>Cole apenas os números no campo <b>Telegram Chat ID</b>, clique em <b>Salvar Alterações</b> e utilize o botão <b>Testar envio</b> para receber a confirmação!</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions" style="margin-top: 20px">
+      <button type="button" class="btn-primary" onclick="closeTelegramHelpModal()">Entendido</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: GUIA DE INSTALAÇÃO DA EXTENSÃO -->
+<div class="modal-backdrop hidden" id="modal-extension-help" onclick="if(event.target === this) closeExtensionHelpModal()">
+  <div class="modal-content modal-tg-content" style="max-width: 600px;">
+    <div class="modal-header">
+      <div>
+        <div style="display:flex; align-items:center; gap:8px">
+          <i class="fa-solid fa-puzzle-piece" style="color: var(--accent-red); font-size: 20px"></i>
+          <h3>Como Instalar e Usar a Extensão</h3>
+        </div>
+        <p>Siga o passo a passo de 4 etapas para monitorar produtos em 1 clique.</p>
+      </div>
+      <button type="button" class="modal-close" onclick="closeExtensionHelpModal()" title="Fechar">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <div class="tg-guide-steps">
+      <div class="tg-step-item">
+        <div class="tg-step-num" style="background: var(--accent-red);">1</div>
+        <div class="tg-step-body">
+          <strong>Passo 1 — Baixe e extraia o pacote da extensão</strong>
+          <p>Clique no botão <b>Baixar Extensão (.zip)</b>. Após o download, extraia o arquivo compactado em uma pasta permanente do seu computador (como sua pasta Documentos). Uma pasta chamada <code>price-tracker-extension</code> será criada.</p>
+        </div>
+      </div>
+
+      <div class="tg-step-item">
+        <div class="tg-step-num" style="background: var(--accent-red);">2</div>
+        <div class="tg-step-body">
+          <strong>Passo 2 — Acesse a página de extensões do seu navegador</strong>
+          <p>Abra seu navegador baseado em Chromium (Google Chrome, Microsoft Edge, Brave ou Opera) e digite <b><code>chrome://extensions</code></b> (ou <code>edge://extensions</code>, <code>brave://extensions</code>) na barra de endereços.</p>
+        </div>
+      </div>
+
+      <div class="tg-step-item">
+        <div class="tg-step-num" style="background: var(--accent-red);">3</div>
+        <div class="tg-step-body">
+          <strong>Passo 3 — Ative o "Modo do desenvolvedor" e carregue a pasta</strong>
+          <p>No canto superior direito da página de extensões, ative a chave <b>Modo do desenvolvedor</b>. Em seguida, clique no botão <b>Carregar sem compactação</b> (ou <i>Load unpacked</i>) no topo esquerdo e selecione a pasta <code>price-tracker-extension</code> descompactada.</p>
+        </div>
+      </div>
+
+      <div class="tg-step-item">
+        <div class="tg-step-num" style="background: var(--accent-red);">4</div>
+        <div class="tg-step-body">
+          <strong>Passo 4 — Conecte sua conta e salve produtos em 1 clique</strong>
+          <p>Fixe a extensão na barra do navegador (ícone de alfinete 📌). Clique no ícone do Price Tracker, conecte com seu <b>Token da Extensão</b> (gerado nesta página) ou e-mail/senha. Agora, sempre que estiver na página de um produto na Amazon, Mercado Livre, Shopee, Kabum ou AliExpress, abra a extensão e clique em <b>Salvar</b>!</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions" style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+      <a href="/api/extension/download" download="price-tracker-extension.zip" class="btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 8px;">
+        <i class="fa-solid fa-download"></i>
+        <span>Baixar Extensão (.zip)</span>
+      </a>
+      <button type="button" class="btn-outline" onclick="closeExtensionHelpModal()">Fechar</button>
+    </div>
+  </div>
+</div>

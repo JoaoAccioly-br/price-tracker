@@ -18,6 +18,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
 _TG_CLIENT: httpx.Client | None = None
+_CACHED_BOT_USERNAME: str | None = None
 
 
 def _get_tg_client() -> httpx.Client:
@@ -25,6 +26,44 @@ def _get_tg_client() -> httpx.Client:
     if _TG_CLIENT is None or _TG_CLIENT.is_closed:
         _TG_CLIENT = httpx.Client(timeout=10.0)
     return _TG_CLIENT
+
+
+def get_bot_username() -> str:
+    """Retorna o username do bot do Telegram (sem @), buscando no .env ou via API getMe."""
+    global _CACHED_BOT_USERNAME
+
+    env_username = os.environ.get("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@")
+    if env_username:
+        return env_username
+
+    if _CACHED_BOT_USERNAME is not None:
+        return _CACHED_BOT_USERNAME
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() or TELEGRAM_BOT_TOKEN.strip()
+    if not token:
+        return ""
+
+    api_url = f"https://api.telegram.org/bot{token}/getMe"
+    try:
+        if getattr(httpx.get, "__module__", "") != "httpx":
+            resp = httpx.get(api_url, timeout=5.0)
+        else:
+            resp = _get_tg_client().get(api_url, timeout=5.0)
+
+        if resp.status_code == 200:
+            data = resp.json()
+            username = data.get("result", {}).get("username", "").strip().lstrip("@")
+            if username:
+                _CACHED_BOT_USERNAME = username
+                return username
+        else:
+            safe_body = resp.text.replace(token, "***")[:200]
+            log.warning("Falha ao obter username do Telegram via getMe (%d): %s", resp.status_code, safe_body)
+    except Exception as exc:
+        safe_err = str(exc).replace(token, "***")
+        log.warning("Exceção ao consultar getMe no Telegram: %s", safe_err)
+
+    return ""
 
 
 def should_notify(
@@ -143,6 +182,49 @@ def send_telegram(
         safe_err = str(exc).replace(token, "***")
         log.error("Exceção ao enviar para o Telegram: %s", safe_err)
         return False
+
+
+def send_telegram_test(chat_id: str, user_name: str = "Usuário") -> tuple[bool, str]:
+    """Envia uma mensagem amigável de teste para validar a integração do Telegram com o usuário."""
+    token = TELEGRAM_BOT_TOKEN.strip()
+    target_chat = (chat_id or "").strip()
+
+    if not token:
+        return False, "Bot do Telegram não está configurado no servidor (TELEGRAM_BOT_TOKEN ausente)"
+    if not target_chat:
+        return False, "Chat ID do Telegram não informado"
+
+    text = (
+        "✅ <b>Price Tracker conectado com sucesso!</b>\n\n"
+        f"Olá, {html.escape(user_name)}! Você receberá alertas de queda de preço diretamente neste chat."
+    )
+    api_url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": target_chat,
+        "text": text,
+        "parse_mode": "HTML",
+    }
+
+    try:
+        if getattr(httpx.post, "__module__", "") != "httpx":
+            resp = httpx.post(api_url, json=payload, timeout=10.0)
+        else:
+            resp = _get_tg_client().post(api_url, json=payload, timeout=10.0)
+
+        if resp.status_code == 200:
+            log.info("Mensagem de teste enviada com sucesso para o Telegram (chat_id: %s)", target_chat)
+            return True, "Mensagem de teste enviada com sucesso!"
+
+        safe_body = resp.text.replace(token, "***")[:200]
+        try:
+            err_json = resp.json()
+            err_desc = err_json.get("description", safe_body)
+        except Exception:
+            err_desc = safe_body
+        return False, f"Erro do Telegram: {err_desc}"
+    except Exception as exc:
+        safe_err = str(exc).replace(token, "***")
+        return False, f"Falha na conexão com Telegram: {safe_err}"
 
 
 def notify_price_drop(

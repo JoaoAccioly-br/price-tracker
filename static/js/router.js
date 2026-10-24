@@ -7,6 +7,7 @@ class ViewRouter {
     this.routes = routes;
     this.defaultRoute = defaultRoute;
     this.currentRoute = null;
+    this.queryParams = new URLSearchParams();
     this.templateCache = {};
     this.container = document.getElementById('view-container');
     this.titleEl = document.getElementById('view-title');
@@ -16,23 +17,38 @@ class ViewRouter {
   }
 
   async init() {
-    const initialRoute = window.location.hash.replace('#', '') || this.defaultRoute;
-    await this.navigate(initialRoute, false);
+    const rawHash = window.location.hash.replace('#', '');
+    const [rawRoute, rawQuery] = rawHash.split('?');
+    this.queryParams = new URLSearchParams(rawQuery || '');
+    const initialRoute = rawRoute || this.defaultRoute;
+    await this.navigate(rawHash ? rawHash : this.defaultRoute, false);
   }
 
   handleHashChange() {
-    const route = window.location.hash.replace('#', '') || this.defaultRoute;
-    if (route !== this.currentRoute) {
-      this.navigate(route, false);
-    }
+    const rawHash = window.location.hash.replace('#', '');
+    const [rawRoute, rawQuery] = rawHash.split('?');
+    this.queryParams = new URLSearchParams(rawQuery || '');
+    const route = rawRoute || this.defaultRoute;
+    this.navigate(rawHash || this.defaultRoute, false);
   }
 
   async navigate(routeName, updateHash = true) {
-    const routeConfig = this.routes[routeName] || this.routes[this.defaultRoute];
-    const actualRouteName = this.routes[routeName] ? routeName : this.defaultRoute;
+    let cleanRoute = routeName;
+    let queryPart = '';
+    if (routeName.includes('?')) {
+      const parts = routeName.split('?');
+      cleanRoute = parts[0];
+      queryPart = parts.slice(1).join('?');
+      this.queryParams = new URLSearchParams(queryPart);
+    } else if (updateHash) {
+      this.queryParams = new URLSearchParams();
+    }
+
+    const routeConfig = this.routes[cleanRoute] || this.routes[this.defaultRoute];
+    const actualRouteName = this.routes[cleanRoute] ? cleanRoute : this.defaultRoute;
 
     if (updateHash) {
-      window.location.hash = actualRouteName;
+      window.location.hash = queryPart ? `${actualRouteName}?${queryPart}` : actualRouteName;
     }
 
     this.currentRoute = actualRouteName;
