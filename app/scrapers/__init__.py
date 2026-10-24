@@ -15,7 +15,7 @@ import time
 from urllib.parse import urlparse
 
 from . import aliexpress, amazon, mercadolivre, shopee
-from .base import PriceResult, fetch_html, parse_html
+from .base import PriceResult, canonicalize_url, fetch_html, parse_html
 
 log = logging.getLogger("collector")
 
