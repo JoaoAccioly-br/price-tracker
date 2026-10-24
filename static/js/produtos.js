@@ -240,13 +240,23 @@ function renderProductDetailCard() {
               <td class="price-cell">
                 ${hasCoupon ? `<span style="text-decoration:line-through; color:var(--text-muted); font-size:12px; margin-right:4px">${brl(l.last_price)}</span>` : ''}
                 ${brl(effP)}
-                ${l.available === 0 ? '<div style="color:var(--text-muted); font-size:11px; font-weight:normal">indisponível</div>' : ''}
+                ${l.available === 0 ? `
+                  <div style="margin-top: 4px;">
+                    <button type="button" class="badge-heal-btn" onclick="handleHealListing(${l.id}, this)" title="Buscar novo anúncio ativo nesta loja com IA">
+                      <i class="fa-solid fa-wand-magic-sparkles"></i> Indisponível · Renovar link com IA
+                    </button>
+                  </div>` : ''}
               </td>
               <td class="diff-cell">${diffStr}</td>
               <td style="text-align:center">
-                <button onclick="handleDeleteListingDetail(${l.id})" class="btn-outline" style="padding:4px 8px; font-size:11px; color:var(--accent-red); border-color:#fae9e9" title="Excluir este link">
-                  <i class="fa-solid fa-trash"></i>
-                </button>
+                <div style="display:flex; gap:6px; justify-content:center; align-items:center">
+                  <button onclick="handleHealListing(${l.id}, this)" class="btn-outline" style="padding:4px 8px; font-size:11px; color:#229ED9; border-color:#d4ebf7" title="Buscar novo anúncio ativo nesta loja com IA">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                  </button>
+                  <button onclick="handleDeleteListingDetail(${l.id})" class="btn-outline" style="padding:4px 8px; font-size:11px; color:var(--accent-red); border-color:#fae9e9" title="Excluir este link">
+                    <i class="fa-solid fa-trash"></i>
+                  </button>
+                </div>
               </td>
             </tr>
           `;
@@ -255,6 +265,10 @@ function renderProductDetailCard() {
     </table>
 
     <div style="margin-top: 20px; display:flex; gap:10px; flex-wrap:wrap">
+      <button class="btn-primary" onclick="openAIDiscoverModal(${p.id})" style="background: linear-gradient(135deg, var(--accent-red), #d64567);">
+        <i class="fa-solid fa-wand-magic-sparkles"></i>
+        <span>Buscar em mais lojas com IA</span>
+      </button>
       <button class="btn-outline" id="chart-toggle-btn" onclick="toggleProductChart(${p.id})">
         <i class="fa-solid fa-chart-line"></i>
         <span>Ver histórico</span>
@@ -342,4 +356,89 @@ async function handleDeleteListingDetail(lid) {
     alert('Erro ao excluir link: ' + err.message);
   }
 }
+
+// ==========================================
+// AUTO-RECUPERAÇÃO DE LINK COM IA (HEAL)
+// ==========================================
+async function handleHealListing(lid, btnEl) {
+  if (!confirm('Deseja que a IA busque outro anúncio ativo deste produto na mesma loja para substituir este link?')) {
+    return;
+  }
+
+  const origHtml = btnEl.innerHTML;
+  btnEl.disabled = true;
+  btnEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+
+  try {
+    const res = await api(`/api/listings/${lid}/heal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    await load();
+    renderProdutosView();
+    const priceMsg = res.price ? `\nPreço coletado: ${brl(res.price)}` : '';
+    alert(`Link renovado com sucesso via IA!\n\nNovo anúncio: ${res.title || 'Anúncio ativo'}${priceMsg}`);
+  } catch (err) {
+    alert('Não foi possível renovar o link com IA: ' + err.message);
+    btnEl.disabled = false;
+    btnEl.innerHTML = origHtml;
+  }
+}
+
+// ==========================================
+// MODAL DE DESCOBERTA DE LINKS COM IA
+// ==========================================
+function openAIDiscoverModal(productId) {
+  const modal = document.getElementById('modal-ai-discover');
+  if (!modal) return;
+
+  const p = productsData.find(item => item.id === productId);
+  if (!p) return;
+
+  const idInput = document.getElementById('modal-ai-product-id');
+  const nameEl = document.getElementById('modal-ai-product-name');
+  const storeSel = document.getElementById('modal-ai-store-select');
+
+  if (idInput) idInput.value = p.id;
+  if (nameEl) nameEl.textContent = `[${p.category || 'Notebook'}] ${p.name}`;
+  if (storeSel) storeSel.value = '';
+
+  modal.classList.remove('hidden');
+  runAIDiscoverInModal();
+}
+
+function closeAIDiscoverModal() {
+  const modal = document.getElementById('modal-ai-discover');
+  if (modal) {
+    modal.classList.add('hidden');
+  }
+}
+
+async function runAIDiscoverInModal() {
+  const idInput = document.getElementById('modal-ai-product-id');
+  const storeSel = document.getElementById('modal-ai-store-select');
+  const container = document.getElementById('modal-ai-results-container');
+  if (!idInput || !container) return;
+
+  const productId = +idInput.value;
+  const store = storeSel ? storeSel.value.trim() || null : null;
+  const p = productsData.find(item => item.id === productId);
+
+  if (typeof performAIDiscover === 'function') {
+    await performAIDiscover({
+      product_id: productId,
+      product_name: p ? p.name : undefined,
+      category: p ? p.category : undefined,
+      store: store,
+    }, '#modal-ai-results-container', '#btn-modal-ai-search');
+  }
+}
+
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    closeAIDiscoverModal();
+  }
+});
+
 

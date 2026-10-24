@@ -15,6 +15,9 @@
 <!-- CHART.JS -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 
+<!-- GOOGLE IDENTITY SERVICES -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+
 <!-- CENTRALIZED STYLES -->
 <link rel="stylesheet" href="/css/style.css">
 </head>
@@ -54,10 +57,26 @@
         <i class="fa-solid fa-circle-plus"></i>
         <span>Adicionar Produto / Link</span>
       </button>
+      <button class="nav-item" data-route="conta" onclick="router.navigate('conta')">
+        <i class="fa-solid fa-user-gear"></i>
+        <span>Minha Conta</span>
+      </button>
     </nav>
   </div>
 
   <div class="sidebar-footer">
+    <div class="sidebar-user-card" id="sidebar-user-box" style="display: none;">
+      <div class="sidebar-user-info" onclick="router.navigate('conta')" style="cursor: pointer; display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;" title="Configurações da Conta">
+        <div class="user-avatar" id="sidebar-user-avatar">U</div>
+        <div class="user-meta">
+          <span class="user-name" id="sidebar-user-name">Usuário</span>
+          <span class="user-email" id="sidebar-user-email">usuario@exemplo.com</span>
+        </div>
+      </div>
+      <button type="button" class="btn-logout-icon" onclick="openLogoutModal()" title="Sair da conta">
+        <i class="fa-solid fa-right-from-bracket"></i>
+      </button>
+    </div>
     <div class="lbl">Última leitura</div>
     <div class="val" id="last-read-val">—</div>
   </div>
@@ -92,6 +111,154 @@
   </div>
 </main>
 
+<!-- OVERLAY DE AUTENTICAÇÃO (LOGIN / REGISTRO) -->
+<div id="auth-overlay" class="auth-overlay hidden">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="brand-icon">
+        <i class="fa-solid fa-chart-line"></i>
+      </div>
+      <div class="brand-text">
+        <h1>Price</h1>
+        <span>Tracker</span>
+      </div>
+    </div>
+    <p class="auth-subtitle">Monitore preços e receba alertas inteligentes em tempo real</p>
+
+    <!-- ABAS -->
+    <div class="auth-tabs">
+      <button type="button" class="auth-tab-btn active" id="tab-btn-login" onclick="switchAuthTab('login')">
+        Entrar
+      </button>
+      <button type="button" class="auth-tab-btn" id="tab-btn-register" onclick="switchAuthTab('register')">
+        Criar Conta
+      </button>
+    </div>
+
+    <!-- MENSAGEM DE ERRO VISÍVEL -->
+    <div id="auth-error-msg" class="auth-error hidden"></div>
+
+    <!-- FORMULÁRIO DE LOGIN -->
+    <form id="form-login" onsubmit="handleLoginSubmit(event)">
+      <div class="form-group">
+        <label for="login-email">E-mail</label>
+        <input type="email" id="login-email" name="email" placeholder="seu@email.com" required autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label for="login-password">Senha</label>
+        <input type="password" id="login-password" name="password" placeholder="••••••••" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn-primary auth-submit-btn" id="login-submit-btn">
+        <i class="fa-solid fa-arrow-right-to-bracket"></i>
+        <span>Entrar</span>
+      </button>
+    </form>
+
+    <!-- FORMULÁRIO DE CADASTRO -->
+    <form id="form-register" class="hidden" onsubmit="handleRegisterSubmit(event)">
+      <div class="form-group">
+        <label for="reg-name">Nome</label>
+        <input type="text" id="reg-name" name="name" placeholder="Seu nome" required autocomplete="name">
+      </div>
+      <div class="form-group">
+        <label for="reg-email">E-mail</label>
+        <input type="email" id="reg-email" name="email" placeholder="seu@email.com" required autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label for="reg-password">Senha</label>
+        <input type="password" id="reg-password" name="password" placeholder="Mínimo 6 caracteres" minlength="6" required autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <label for="reg-telegram">Telegram Chat ID <span class="label-optional">(opcional)</span></label>
+        <input type="text" id="reg-telegram" name="telegram_chat_id" placeholder="Ex.: 123456789">
+        <span class="field-hint">Você pode configurar ou alterar a qualquer momento nos alertas.</span>
+      </div>
+      <button type="submit" class="btn-primary auth-submit-btn" id="register-submit-btn">
+        <i class="fa-solid fa-user-plus"></i>
+        <span>Criar Conta</span>
+      </button>
+    </form>
+
+    <!-- LOGIN COM GOOGLE -->
+    <div id="google-auth-section" class="google-auth-section hidden">
+      <div class="auth-divider"><span>ou continue com</span></div>
+      <div id="google-signin-btn" class="google-signin-container"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal de Confirmação de Logout -->
+<div id="modal-logout-confirm" class="modal-backdrop hidden" onclick="if(event.target === this) closeLogoutModal()">
+  <div class="modal-box modal-content" style="max-width: 400px; text-align: center;">
+    <div style="width: 52px; height: 52px; border-radius: 50%; background: #fae9e9; color: var(--accent-red); display: flex; align-items: center; justify-content: center; font-size: 22px; margin: 0 auto 16px;">
+      <i class="fa-solid fa-right-from-bracket"></i>
+    </div>
+    <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 8px; color: var(--text-title);">Sair da conta?</h3>
+    <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 24px; line-height: 1.5;">
+      Tem certeza que deseja encerrar sua sessão atual no Price Tracker?
+    </p>
+    <div style="display: flex; gap: 10px; justify-content: center;">
+      <button type="button" class="btn-outline btn-secondary" onclick="closeLogoutModal()" style="flex: 1; justify-content: center;">
+        Cancelar
+      </button>
+      <button type="button" id="confirm-logout-btn" class="btn-primary" onclick="confirmLogout()" style="flex: 1; justify-content: center;">
+        <i class="fa-solid fa-right-from-bracket"></i> <span>Sim, sair</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: DESCOBERTA DE LINKS COM IA (GEMINI) -->
+<div id="modal-ai-discover" class="modal-backdrop hidden" onclick="if(event.target === this) closeAIDiscoverModal()">
+  <div class="modal-content modal-box" style="max-width: 680px;">
+    <div class="modal-header">
+      <div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div style="width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, var(--accent-red), #d64567); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 15px;">
+            <i class="fa-solid fa-wand-magic-sparkles"></i>
+          </div>
+          <h3>Buscar Links com IA</h3>
+        </div>
+        <p id="modal-ai-discover-subtitle">Encontre novos links ativos para este produto em múltiplos e-commerces.</p>
+      </div>
+      <button type="button" class="modal-close" onclick="closeAIDiscoverModal()" title="Fechar">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <!-- FILTRO RÁPIDO DENTRO DO MODAL -->
+    <div style="display: flex; gap: 10px; margin-top: 16px; align-items: flex-end; flex-wrap: wrap;">
+      <div style="flex: 1; min-width: 220px;">
+        <input type="hidden" id="modal-ai-product-id">
+        <label style="font-size: 12px; font-weight: 700; color: var(--text-muted); display: block; margin-bottom: 4px;">Produto Selecionado</label>
+        <div id="modal-ai-product-name" style="font-size: 14px; font-weight: 700; color: var(--text-title); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 8px 12px; background: #fbf6f6; border: 1px solid var(--card-border); border-radius: 10px;">—</div>
+      </div>
+      <div style="width: 170px;">
+        <label for="modal-ai-store-select" style="font-size: 12px; font-weight: 700; color: var(--text-muted); display: block; margin-bottom: 4px;">Filtrar loja</label>
+        <select id="modal-ai-store-select" onchange="runAIDiscoverInModal()">
+          <option value="">Todas as lojas</option>
+          <option value="Shopee">Shopee</option>
+          <option value="Mercado Livre">Mercado Livre</option>
+          <option value="Amazon">Amazon</option>
+          <option value="KaBuM!">KaBuM!</option>
+          <option value="Magalu">Magalu</option>
+        </select>
+      </div>
+      <div>
+        <button type="button" class="btn-primary" onclick="runAIDiscoverInModal()" id="btn-modal-ai-search" style="padding: 10px 14px; background: linear-gradient(135deg, var(--accent-red), #d64567);">
+          <i class="fa-solid fa-rotate"></i>
+          <span>Buscar</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- RESULTADOS DENTRO DO MODAL -->
+    <div id="modal-ai-results-container" style="margin-top: 20px; max-height: 440px; overflow-y: auto; padding-right: 4px;">
+      <!-- Renderizado via JS -->
+    </div>
+  </div>
+</div>
+
 <!-- SCRIPTS MODULARES -->
 <script src="/js/utils.js"></script>
 <script src="/js/router.js"></script>
@@ -101,6 +268,7 @@
 <script src="/js/alertas.js"></script>
 <script src="/js/historico.js"></script>
 <script src="/js/lojas.js"></script>
+<script src="/js/conta.js"></script>
 <script src="/js/app.js"></script>
 </body>
 </html>

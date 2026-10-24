@@ -94,6 +94,7 @@ def test_api_product_analysis_endpoint(tmp_path, monkeypatch):
             conn.execute("DELETE FROM prices")
             conn.execute("DELETE FROM listings")
             conn.execute("DELETE FROM products")
+            conn.execute("DELETE FROM users")
             conn.execute("DELETE FROM app_settings")
         conn.close()
 
