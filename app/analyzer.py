@@ -223,20 +223,23 @@ def analyze_price_history(
 
 
 def get_product_analysis(product_id: int, current_price: float | None = None, conn=None) -> PriceAnalysis:
-    """Busca o histórico no banco de dados e gera a análise de promoção para o produto."""
+    """Busca o histórico recente (65 dias) no banco de dados e gera a análise de promoção."""
     close_at_end = False
     if conn is None:
         conn = get_conn()
         close_at_end = True
 
     try:
+        cutoff_65d = (datetime.now(timezone.utc) - timedelta(days=65)).strftime("%Y-%m-%d %H:%M:%S")
         rows = conn.execute(
             """SELECT pr.price, pr.final_price, pr.checked_at
                FROM prices pr
                JOIN listings l ON l.id = pr.listing_id
-               WHERE l.product_id = ? AND (pr.available = 1 OR pr.available IS NULL)
+               WHERE l.product_id = ?
+                 AND (pr.available = 1 OR pr.available IS NULL)
+                 AND pr.checked_at >= ?
                ORDER BY pr.checked_at ASC""",
-            (product_id,),
+            (product_id, cutoff_65d),
         ).fetchall()
         records = [dict(r) for r in rows]
         return analyze_price_history(records, current_price=current_price)

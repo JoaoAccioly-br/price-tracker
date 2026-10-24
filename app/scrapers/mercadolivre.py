@@ -25,6 +25,27 @@ ML_HEADERS = {
     "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
 }
 
+_ML_HTTP_CLIENT: httpx.Client | None = None
+
+
+def _get_ml_client() -> httpx.Client:
+    global _ML_HTTP_CLIENT
+    if _ML_HTTP_CLIENT is None or _ML_HTTP_CLIENT.is_closed:
+        _ML_HTTP_CLIENT = httpx.Client(timeout=10)
+    return _ML_HTTP_CLIENT
+
+
+def _http_get(url: str, **kwargs):
+    if getattr(httpx.get, "__module__", "") != "httpx":
+        return httpx.get(url, **kwargs)
+    return _get_ml_client().get(url, **kwargs)
+
+
+def _http_post(url: str, **kwargs):
+    if getattr(httpx.post, "__module__", "") != "httpx":
+        return httpx.post(url, **kwargs)
+    return _get_ml_client().post(url, **kwargs)
+
 
 def get_access_token() -> str | None:
     """Obtém um access token válido para a API do Mercado Livre.
@@ -83,7 +104,7 @@ def refresh_access_token() -> str | None:
         log.warning("[ML-OAuth] MERCADOLIVRE_CLIENT_ID e MERCADOLIVRE_CLIENT_SECRET não configurados.")
         return None
 
-    from ..db import get_setting, set_setting
+    from ..db import get_setting, set_settings_bulk
 
     refresh_token = get_setting("ml_refresh_token") or initial_refresh
     if not refresh_token:
@@ -105,7 +126,7 @@ def refresh_access_token() -> str | None:
         "Accept": "application/json",
     }
     try:
-        r = httpx.post(oauth_url, data=payload, headers=headers, timeout=15)
+        r = _http_post(oauth_url, data=payload, headers=headers, timeout=15)
         if r.status_code == 200:
             data = r.json()
             new_access_token = data.get("access_token")
@@ -115,10 +136,13 @@ def refresh_access_token() -> str | None:
 
             if new_access_token:
                 try:
-                    set_setting("ml_access_token", new_access_token)
-                    set_setting("ml_token_expires_at", str(new_expires_at))
+                    to_save = {
+                        "ml_access_token": new_access_token,
+                        "ml_token_expires_at": str(new_expires_at),
+                    }
                     if new_refresh_token:
-                        set_setting("ml_refresh_token", new_refresh_token)
+                        to_save["ml_refresh_token"] = new_refresh_token
+                    set_settings_bulk(to_save)
                 except Exception as db_err:
                     log.warning("[ML-OAuth] Erro ao persistir tokens no banco: %s", db_err)
 
@@ -207,7 +231,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
 
         for api_url in endpoints:
             try:
-                r = httpx.get(api_url, headers=headers, timeout=10)
+                r = _http_get(api_url, headers=headers, timeout=10)
                 if r.status_code == 200:
                     data = r.json()
                     price = None
@@ -282,7 +306,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
                                 available = bb.get("status", "active") == "active"
                             winner_item_id = bb.get("item_id") or bb.get("id")
                             if price is None and winner_item_id:
-                                item_r = httpx.get(
+                                item_r = _http_get(
                                     f"https://api.mercadolibre.com/items?ids={winner_item_id}",
                                     headers=headers,
                                     timeout=10,
@@ -302,7 +326,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
                                             )
                                             name = w_body.get("title") or name
                         elif isinstance(bb, str) and bb.startswith("MLB"):
-                            item_r = httpx.get(
+                            item_r = _http_get(
                                 f"https://api.mercadolibre.com/items?ids={bb}",
                                 headers=headers,
                                 timeout=10,
@@ -344,7 +368,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
                         # 4. Children IDs
                         if price is None and data.get("children_ids"):
                             for child_id in data["children_ids"][:3]:
-                                child_r = httpx.get(
+                                child_r = _http_get(
                                     f"https://api.mercadolibre.com/products/{child_id}",
                                     headers=headers,
                                     timeout=10,

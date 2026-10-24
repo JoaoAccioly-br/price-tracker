@@ -13,9 +13,11 @@ function setPainelCategory(cat) {
   renderPainelTable();
 }
 
+const _debouncedPainelRender = typeof debounce === 'function' ? debounce(() => renderPainelTable(), 150) : () => renderPainelTable();
+
 function handlePainelSearch(val) {
   painelSearchQuery = val;
-  renderPainelTable();
+  _debouncedPainelRender();
 }
 
 function getFilteredPainelProducts() {
@@ -133,7 +135,7 @@ function renderPainelTable() {
 
     let dealBadge = '';
     if (p.analysis && p.analysis.label) {
-      dealBadge = `<div style="margin-top:3px"><span class="deal-badge ${p.analysis.badge_class}" title="${escapeHtml(p.analysis.description || '')}">${escapeHtml(p.analysis.label)}</span></div>`;
+      dealBadge = `<div style="margin-top:3px"><span class="deal-badge ${escapeHtml(p.analysis.badge_class || '')}" title="${escapeHtml(p.analysis.description || '')}">${escapeHtml(p.analysis.label)}</span></div>`;
     }
 
     return `

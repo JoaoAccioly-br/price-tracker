@@ -60,3 +60,15 @@ def test_db_settings_and_transactions(tmp_path, monkeypatch):
         conn3.execute("DELETE FROM products WHERE id = ?", (prod_id,))
         conn3.execute("DELETE FROM app_settings WHERE key = ?", ("test_key",))
     conn3.close()
+
+
+def test_postgres_prepare_sql_preserves_question_marks_in_literals():
+    wrapper = db.PostgresConnectionWrapper(raw_conn=None)
+    sql, needs_ret = wrapper._prepare_sql("SELECT * FROM listings WHERE url = 'https://loja.com/item?id=1' AND id = ?")
+    assert needs_ret is False
+    assert sql == "SELECT * FROM listings WHERE url = 'https://loja.com/item?id=1' AND id = %s"
+
+    # INSERT em products COM menção a app_settings em literal ainda deve receber RETURNING id
+    sql_ins, needs_ret_ins = wrapper._prepare_sql("INSERT INTO products (name) VALUES ('app_settings')")
+    assert needs_ret_ins is True
+    assert sql_ins.endswith("RETURNING id")

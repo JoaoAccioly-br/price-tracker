@@ -76,15 +76,25 @@ def generate_shopee_signature(app_id: str, secret: str, payload_dict: dict) -> t
     return timestamp, signature
 
 
+_SHOPEE_HTTP_CLIENT: httpx.Client | None = None
+
+
+def _get_shopee_client(timeout: float = 15.0) -> httpx.Client:
+    global _SHOPEE_HTTP_CLIENT
+    if _SHOPEE_HTTP_CLIENT is None or _SHOPEE_HTTP_CLIENT.is_closed:
+        _SHOPEE_HTTP_CLIENT = httpx.Client(timeout=timeout)
+    return _SHOPEE_HTTP_CLIENT
+
+
 def fetch_from_api(url: str, app_id: str, secret: str, timeout: float = 15.0) -> PriceResult:
     """Consulta os dados e o preço do item diretamente via API Oficial de Afiliados da Shopee."""
     shop_id, item_id = extract_shopee_ids(url)
-    if not item_id:
+    if not item_id or not item_id.isdigit():
         return PriceResult(price=None, available=False, name=None, source="shopee:invalid-url")
 
     # GraphQL query para buscar a oferta pelo itemId
     query_str = (
-        f"query {{ productOfferV2(itemId: {item_id}, limit: 1) {{ "
+        f"query {{ productOfferV2(itemId: {int(item_id)}, limit: 1) {{ "
         f"nodes {{ itemId productName productLink priceMin priceMax price }} }} }}"
     )
     payload = {"query": query_str}
@@ -96,37 +106,37 @@ def fetch_from_api(url: str, app_id: str, secret: str, timeout: float = 15.0) ->
     }
 
     try:
-        with httpx.Client(timeout=timeout) as client:
-            resp = client.post(SHOPEE_API_URL, json=payload, headers=headers)
-            if resp.status_code != 200:
-                log.warning("Shopee API retornou status HTTP %d: %s", resp.status_code, resp.text[:200])
-                return PriceResult(price=None, available=False, name=None, source=f"shopee:http-{resp.status_code}")
+        client = _get_shopee_client(timeout=timeout)
+        resp = client.post(SHOPEE_API_URL, json=payload, headers=headers, timeout=timeout)
+        if resp.status_code != 200:
+            log.warning("Shopee API retornou status HTTP %d: %s", resp.status_code, resp.text[:200])
+            return PriceResult(price=None, available=False, name=None, source=f"shopee:http-{resp.status_code}")
 
-            data = resp.json()
+        data = resp.json()
 
-            # Trata erros do GraphQL
-            errors = data.get("errors")
-            if errors:
-                err_msg = errors[0].get("message", "unknown error")
-                log.warning("Shopee API retornou erro GraphQL: %s", err_msg)
-                return PriceResult(price=None, available=False, name=None, source=f"shopee:error-{err_msg}")
+        # Trata erros do GraphQL
+        errors = data.get("errors")
+        if errors:
+            err_msg = errors[0].get("message", "unknown error")
+            log.warning("Shopee API retornou erro GraphQL: %s", err_msg)
+            return PriceResult(price=None, available=False, name=None, source=f"shopee:error-{err_msg}")
 
-            offer_data = data.get("data", {}).get("productOfferV2", {})
-            nodes = offer_data.get("nodes", [])
-            if not nodes:
-                log.info("Shopee API: Nenhum resultado retornado para o itemId %s", item_id)
-                return PriceResult(price=None, available=False, name=None, source="shopee:not-found")
+        offer_data = data.get("data", {}).get("productOfferV2", {})
+        nodes = offer_data.get("nodes", [])
+        if not nodes:
+            log.info("Shopee API: Nenhum resultado retornado para o itemId %s", item_id)
+            return PriceResult(price=None, available=False, name=None, source="shopee:not-found")
 
-            item_info = nodes[0]
-            name = item_info.get("productName")
-            raw_price = item_info.get("price") or item_info.get("priceMin") or item_info.get("priceMax")
-            price = parse_brl(raw_price)
+        item_info = nodes[0]
+        name = item_info.get("productName")
+        raw_price = item_info.get("price") or item_info.get("priceMin") or item_info.get("priceMax")
+        price = parse_brl(raw_price)
 
-            if price is not None:
-                log.info("Shopee API: Preço R$ %.2f obtido para '%s' (item %s)", price, name, item_id)
-                return PriceResult(price=price, available=True, name=name, source="shopee:api")
+        if price is not None:
+            log.info("Shopee API: Preço R$ %.2f obtido para '%s' (item %s)", price, name, item_id)
+            return PriceResult(price=price, available=True, name=name, source="shopee:api", final_price=price)
 
-            return PriceResult(price=None, available=False, name=name, source="shopee:price-missing")
+        return PriceResult(price=None, available=False, name=name, source="shopee:price-missing")
 
     except Exception as exc:
         log.warning("Erro ao consultar a API da Shopee para %s: %s", url, exc)

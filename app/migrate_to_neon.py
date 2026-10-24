@@ -47,14 +47,13 @@ def migrate(pg_url: str):
         prods = s_conn.execute("SELECT id, name, category, target_price FROM products ORDER BY id").fetchall()
         print(f"[*] Migrando {len(prods)} produtos...")
         with pg_conn.cursor() as cur:
-            for p in prods:
-                cur.execute(
-                    """INSERT INTO products (id, name, category, target_price)
-                       VALUES (%s, %s, %s, %s)
-                       ON CONFLICT (id) DO UPDATE
-                       SET name = EXCLUDED.name, category = EXCLUDED.category, target_price = EXCLUDED.target_price""",
-                    (p["id"], p["name"], p["category"], p["target_price"]),
-                )
+            cur.executemany(
+                """INSERT INTO products (id, name, category, target_price)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (id) DO UPDATE
+                   SET name = EXCLUDED.name, category = EXCLUDED.category, target_price = EXCLUDED.target_price""",
+                [(p["id"], p["name"], p["category"], p["target_price"]) for p in prods],
+            )
             # Atualiza sequência de ID do Postgres
             cur.execute("SELECT setval('products_id_seq', COALESCE((SELECT MAX(id) FROM products), 1), true)")
         pg_conn.commit()
@@ -63,15 +62,17 @@ def migrate(pg_url: str):
         listings = s_conn.execute("SELECT id, product_id, store, url, css_selector, use_browser, active FROM listings ORDER BY id").fetchall()
         print(f"[*] Migrando {len(listings)} links/lojas...")
         with pg_conn.cursor() as cur:
-            for l in listings:
-                cur.execute(
-                    """INSERT INTO listings (id, product_id, store, url, css_selector, use_browser, active)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s)
-                       ON CONFLICT (id) DO UPDATE
-                       SET store = EXCLUDED.store, url = EXCLUDED.url, css_selector = EXCLUDED.css_selector,
-                           use_browser = EXCLUDED.use_browser, active = EXCLUDED.active""",
-                    (l["id"], l["product_id"], l["store"], l["url"], l["css_selector"], l["use_browser"], l["active"]),
-                )
+            cur.executemany(
+                """INSERT INTO listings (id, product_id, store, url, css_selector, use_browser, active)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (id) DO UPDATE
+                   SET store = EXCLUDED.store, url = EXCLUDED.url, css_selector = EXCLUDED.css_selector,
+                       use_browser = EXCLUDED.use_browser, active = EXCLUDED.active""",
+                [
+                    (l["id"], l["product_id"], l["store"], l["url"], l["css_selector"], l["use_browser"], l["active"])
+                    for l in listings
+                ],
+            )
             cur.execute("SELECT setval('listings_id_seq', COALESCE((SELECT MAX(id) FROM listings), 1), true)")
         pg_conn.commit()
 
@@ -79,15 +80,17 @@ def migrate(pg_url: str):
         prices = s_conn.execute("SELECT id, listing_id, price, available, coupon_code, final_price, checked_at FROM prices ORDER BY id").fetchall()
         print(f"[*] Migrando {len(prices)} registros de preços do histórico...")
         with pg_conn.cursor() as cur:
-            for pr in prices:
-                cur.execute(
-                    """INSERT INTO prices (id, listing_id, price, available, coupon_code, final_price, checked_at)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s)
-                       ON CONFLICT (id) DO UPDATE
-                       SET price = EXCLUDED.price, available = EXCLUDED.available, coupon_code = EXCLUDED.coupon_code,
-                           final_price = EXCLUDED.final_price, checked_at = EXCLUDED.checked_at""",
-                    (pr["id"], pr["listing_id"], pr["price"], pr["available"], pr["coupon_code"], pr["final_price"], pr["checked_at"]),
-                )
+            cur.executemany(
+                """INSERT INTO prices (id, listing_id, price, available, coupon_code, final_price, checked_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (id) DO UPDATE
+                   SET price = EXCLUDED.price, available = EXCLUDED.available, coupon_code = EXCLUDED.coupon_code,
+                       final_price = EXCLUDED.final_price, checked_at = EXCLUDED.checked_at""",
+                [
+                    (pr["id"], pr["listing_id"], pr["price"], pr["available"], pr["coupon_code"], pr["final_price"], pr["checked_at"])
+                    for pr in prices
+                ],
+            )
             cur.execute("SELECT setval('prices_id_seq', COALESCE((SELECT MAX(id) FROM prices), 1), true)")
         pg_conn.commit()
 

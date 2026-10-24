@@ -17,6 +17,15 @@ log = logging.getLogger("notifier")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
+_TG_CLIENT: httpx.Client | None = None
+
+
+def _get_tg_client() -> httpx.Client:
+    global _TG_CLIENT
+    if _TG_CLIENT is None or _TG_CLIENT.is_closed:
+        _TG_CLIENT = httpx.Client(timeout=10.0)
+    return _TG_CLIENT
+
 
 def should_notify(
     target_price: float | None,
@@ -95,7 +104,11 @@ def send_telegram(
         if min60:
             stats.append(f"Mín 60d: R$ {min60:.2f}")
         stats_line = f"\n📈 <i>{' | '.join(stats)}</i>" if stats else ""
-        analysis_text = f"\n\n📊 <b>Análise de Promoção:</b>\n{label}{stats_line}\n<i>{html.escape(desc)}</i>"
+        analysis_text = (
+            f"\n\n📊 <b>Análise de Promoção:</b>\n"
+            f"{html.escape(str(label))}{stats_line}\n"
+            f"<i>{html.escape(str(desc))}</i>"
+        )
 
     text = (
         f"🎯 <b>Alerta de Preço Atingido!</b>\n\n"
@@ -116,14 +129,19 @@ def send_telegram(
     }
 
     try:
-        resp = httpx.post(api_url, json=payload, timeout=10.0)
+        if getattr(httpx.post, "__module__", "") != "httpx":
+            resp = httpx.post(api_url, json=payload, timeout=10.0)
+        else:
+            resp = _get_tg_client().post(api_url, json=payload, timeout=10.0)
         if resp.status_code == 200:
             log.info("Alerta enviado com sucesso para o Telegram (chat_id: %s)", chat)
             return True
-        log.error("Erro na API do Telegram: %d - %s", resp.status_code, resp.text)
+        safe_body = resp.text.replace(token, "***")[:300]
+        log.error("Erro na API do Telegram: %d - %s", resp.status_code, safe_body)
         return False
     except Exception as exc:
-        log.error("Exceção ao enviar para o Telegram: %s", exc)
+        safe_err = str(exc).replace(token, "***")
+        log.error("Exceção ao enviar para o Telegram: %s", safe_err)
         return False
 
 

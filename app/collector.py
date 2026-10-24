@@ -9,8 +9,9 @@ import logging
 import random
 import threading
 import time
+from urllib.parse import urlparse
 
-from .db import get_conn, init_db
+from .db import ensure_db_initialized, get_conn
 from .notifier import notify_price_drop, should_notify
 from .scrapers import scrape
 
@@ -76,30 +77,51 @@ def collect_all(delay: tuple[float, float] = (3.0, 8.0)) -> dict:
         _COLLECT_LOCK.release()
 
 
+def _domain_delay(domain: str, default_delay: tuple[float, float]) -> float:
+    """Retorna um intervalo menor para APIs oficiais autenticadas e completo para scraping HTML."""
+    if domain.endswith("mercadolivre.com.br") or domain.endswith("shopee.com.br"):
+        return random.uniform(0.4, 1.2)
+    return random.uniform(*default_delay)
+
+
 def _collect_all(delay: tuple[float, float]) -> dict:
     COLLECTOR_STATE["running"] = True
     COLLECTOR_STATE["current"] = 0
     COLLECTOR_STATE["total"] = 0
     COLLECTOR_STATE["stats"] = {"ok": 0, "failed": 0}
 
-    init_db()
+    ensure_db_initialized()
     conn = get_conn()
-    rows = conn.execute(
-        """SELECT l.*, p.name AS product_name, p.target_price, p.last_alert_at, p.last_alert_price
-           FROM listings l JOIN products p ON p.id = l.product_id
-           WHERE l.active = 1"""
-    ).fetchall()
+    try:
+        rows = [
+            dict(r)
+            for r in conn.execute(
+                """SELECT l.*, p.name AS product_name, p.target_price, p.last_alert_at, p.last_alert_price
+                   FROM listings l JOIN products p ON p.id = l.product_id
+                   WHERE l.active = 1"""
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
 
     COLLECTOR_STATE["total"] = len(rows)
     _notify_listeners({"event": "start", "total": len(rows), "current": 0})
     stats = {"ok": 0, "failed": 0}
     # Rastreia alertas já disparados nesta mesma execução para evitar duplicados
     alerted_in_run: dict[int, tuple[str, float]] = {}
+    # Rate-limiting por domínio: evita esperar entre lojas diferentes
+    last_request_by_domain: dict[str, float] = {}
     try:
         for i, row in enumerate(rows):
             COLLECTOR_STATE["current"] = i + 1
-            if i:
-                time.sleep(random.uniform(*delay))  # não martelar o site
+            domain = (urlparse(row["url"]).hostname or row["store"] or "").lower()
+            prev_ts = last_request_by_domain.get(domain)
+            if prev_ts is not None:
+                wait_needed = _domain_delay(domain, delay) - (time.monotonic() - prev_ts)
+                if wait_needed > 0:
+                    time.sleep(wait_needed)
+            last_request_by_domain[domain] = time.monotonic()
+
             try:
                 result = scrape(row["url"], row["css_selector"])
             except Exception as exc:  # rede, bloqueio, timeout...
@@ -123,60 +145,63 @@ def _collect_all(delay: tuple[float, float]) -> dict:
                 continue
 
             effective_price = result.final_price or result.price
-            with conn:
-                conn.execute(
-                    """INSERT INTO prices (listing_id, price, available, coupon_code, final_price)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (row["id"], result.price, int(result.available), result.coupon_code, effective_price),
-                )
-            stats["ok"] += 1
-            COLLECTOR_STATE["stats"] = stats
-            coupon_info = f" [cupom {result.coupon_code} -> R$ {effective_price:.2f}]" if result.coupon_code else ""
-            log.info("[%s] %s -> R$ %.2f%s (via %s)", row["store"], row["product_name"],
-                     result.price, coupon_info, result.source)
+            w_conn = get_conn()
+            try:
+                with w_conn:
+                    w_conn.execute(
+                        """INSERT INTO prices (listing_id, price, available, coupon_code, final_price)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (row["id"], result.price, int(result.available), result.coupon_code, effective_price),
+                    )
+                stats["ok"] += 1
+                COLLECTOR_STATE["stats"] = stats
+                coupon_info = f" [cupom {result.coupon_code} -> R$ {effective_price:.2f}]" if result.coupon_code else ""
+                log.info("[%s] %s -> R$ %.2f%s (via %s)", row["store"], row["product_name"],
+                         result.price, coupon_info, result.source)
 
-            _notify_listeners({
-                "event": "progress", "current": i + 1, "total": len(rows),
-                "store": row["store"], "success": True, "price": result.price,
-                "final_price": effective_price, "coupon_code": result.coupon_code,
-            })
+                _notify_listeners({
+                    "event": "progress", "current": i + 1, "total": len(rows),
+                    "store": row["store"], "success": True, "price": result.price,
+                    "final_price": effective_price, "coupon_code": result.coupon_code,
+                })
 
-            target = row["target_price"]
-            if target and result.available and effective_price <= target:
-                log.warning("ALERTA: %s a R$ %.2f na %s (alvo R$ %.2f)%s",
-                            row["product_name"], effective_price, row["store"], target, coupon_info)
+                target = row["target_price"]
+                if target and result.available and effective_price <= target:
+                    log.warning("ALERTA: %s a R$ %.2f na %s (alvo R$ %.2f)%s",
+                                row["product_name"], effective_price, row["store"], target, coupon_info)
 
-                prod_id = row["product_id"]
-                if prod_id in alerted_in_run:
-                    curr_last_at, curr_last_price = alerted_in_run[prod_id]
-                else:
-                    curr_last_at = row["last_alert_at"]
-                    curr_last_price = row["last_alert_price"]
+                    prod_id = row["product_id"]
+                    if prod_id in alerted_in_run:
+                        curr_last_at, curr_last_price = alerted_in_run[prod_id]
+                    else:
+                        curr_last_at = row["last_alert_at"]
+                        curr_last_price = row["last_alert_price"]
 
-                if should_notify(target, effective_price, curr_last_at, curr_last_price):
-                    try:
-                        from .analyzer import get_product_analysis
-                        analysis = get_product_analysis(prod_id, current_price=effective_price, conn=conn)
-                        notify_price_drop(
-                            product_name=row["product_name"],
-                            store=row["store"],
-                            url=row["url"],
-                            current_price=effective_price,
-                            target_price=target,
-                            coupon_code=result.coupon_code,
-                            analysis=analysis,
-                        )
-                        now_utc = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-                        with conn:
-                            conn.execute(
-                                "UPDATE products SET last_alert_at = ?, last_alert_price = ? WHERE id = ?",
-                                (now_utc, effective_price, prod_id),
+                    if should_notify(target, effective_price, curr_last_at, curr_last_price):
+                        try:
+                            from .analyzer import get_product_analysis
+                            analysis = get_product_analysis(prod_id, current_price=effective_price, conn=w_conn)
+                            notify_price_drop(
+                                product_name=row["product_name"],
+                                store=row["store"],
+                                url=row["url"],
+                                current_price=effective_price,
+                                target_price=target,
+                                coupon_code=result.coupon_code,
+                                analysis=analysis,
                             )
-                        alerted_in_run[prod_id] = (now_utc, effective_price)
-                    except Exception as err:
-                        log.error("Erro ao processar notificação de alerta para o produto %s: %s", prod_id, err)
+                            now_utc = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+                            with w_conn:
+                                w_conn.execute(
+                                    "UPDATE products SET last_alert_at = ?, last_alert_price = ? WHERE id = ?",
+                                    (now_utc, effective_price, prod_id),
+                                )
+                            alerted_in_run[prod_id] = (now_utc, effective_price)
+                        except Exception as err:
+                            log.error("Erro ao processar notificação de alerta para o produto %s: %s", prod_id, err)
+            finally:
+                w_conn.close()
     finally:
-        conn.close()
         COLLECTOR_STATE["running"] = False
         COLLECTOR_STATE["last_run"] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())  # UTC, igual ao banco
         _notify_listeners({

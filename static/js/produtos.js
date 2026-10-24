@@ -13,9 +13,11 @@ function setProdutosCategory(cat) {
   renderProdutosView();
 }
 
+const _debouncedProdutosRender = typeof debounce === 'function' ? debounce(() => renderProdutosView(), 150) : () => renderProdutosView();
+
 function handleProdutosSearch(val) {
   produtosSearchQuery = val;
-  renderProdutosView();
+  _debouncedProdutosRender();
 }
 
 function getFilteredProdutos() {
@@ -97,7 +99,7 @@ function renderProdutosView() {
     }
     let dealBadge = '';
     if (p.analysis && p.analysis.label) {
-      dealBadge = `<div style="margin-top:3px"><span class="deal-badge ${p.analysis.badge_class}" title="${escapeHtml(p.analysis.description || '')}">${escapeHtml(p.analysis.label)}</span></div>`;
+      dealBadge = `<div style="margin-top:3px"><span class="deal-badge ${escapeHtml(p.analysis.badge_class || '')}" title="${escapeHtml(p.analysis.description || '')}">${escapeHtml(p.analysis.label)}</span></div>`;
     }
     const iconCls = typeof getCategoryIcon === 'function' ? getCategoryIcon(p.category) : 'fa-solid fa-laptop';
 
@@ -170,7 +172,7 @@ function renderProductDetailCard() {
       <div class="analysis-card-box">
         <div class="analysis-header">
           <span style="font-weight:700; font-size:12px; color:var(--text-title)"><i class="fa-solid fa-chart-line" style="margin-right:5px; color:var(--accent-red)"></i> Termômetro de Promoção (30 & 60 dias)</span>
-          <span class="deal-badge ${a.badge_class}">${escapeHtml(a.label)}</span>
+          <span class="deal-badge ${escapeHtml(a.badge_class || '')}">${escapeHtml(a.label)}</span>
         </div>
         <div class="analysis-desc">${escapeHtml(a.description)}</div>
         ${stats.length ? `<div class="analysis-stats-row">${stats.join(' · ')}</div>` : ''}
@@ -291,13 +293,17 @@ async function toggleProductChart(pid) {
 
   const labels = [...new Set(rows.map(r => r.checked_at))].sort();
   const stores = [...new Set(rows.map(r => r.store))];
+  const priceIndex = new Map();
+  rows.forEach(r => {
+    priceIndex.set(`${r.store}::${r.checked_at}`, r.final_price || r.price);
+  });
   const datasets = stores.map(s => ({
     label: s,
     spanGaps: true,
     tension: 0.25,
     data: labels.map(t => {
-      const row = rows.find(r => r.store === s && r.checked_at === t);
-      return row ? (row.final_price || row.price) : null;
+      const val = priceIndex.get(`${s}::${t}`);
+      return val !== undefined ? val : null;
     }),
   }));
 

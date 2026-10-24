@@ -109,9 +109,24 @@ async function loadHistoricoData(pid) {
     elTargetSub.textContent = 'Configure na tela de Alertas';
   }
 
-  // 4. Gráfico Multi-Loja com Linha de Alvo
-  const labels = [...new Set(activeRows.map(r => formatDateTimeShortBR(r.checked_at)))].sort();
+  // 4. Gráfico Multi-Loja com Linha de Alvo (indexado em O(N) e ordenado cronologicamente)
+  const rawTimestamps = [...new Set(activeRows.map(r => r.checked_at))].sort();
+  const shortLabelByTs = new Map();
+  const uniqueShortLabels = [];
+  rawTimestamps.forEach(ts => {
+    const lbl = formatDateTimeShortBR(ts);
+    shortLabelByTs.set(ts, lbl);
+    if (!uniqueShortLabels.length || uniqueShortLabels[uniqueShortLabels.length - 1] !== lbl) {
+      uniqueShortLabels.push(lbl);
+    }
+  });
+  const labels = uniqueShortLabels;
   const stores = [...new Set(activeRows.map(r => r.store))];
+  const storeLabelPriceMap = new Map();
+  activeRows.forEach(r => {
+    const lbl = shortLabelByTs.get(r.checked_at) || formatDateTimeShortBR(r.checked_at);
+    storeLabelPriceMap.set(`${r.store}::${lbl}`, r.final_price || r.price);
+  });
 
   const storeColors = {
     Amazon: '#cc6c14',
@@ -129,8 +144,8 @@ async function loadHistoricoData(pid) {
     borderWidth: 2,
     pointRadius: 3,
     data: labels.map(t => {
-      const match = activeRows.find(r => r.store === s && formatDateTimeShortBR(r.checked_at) === t);
-      return match ? (match.final_price || match.price) : null;
+      const val = storeLabelPriceMap.get(`${s}::${t}`);
+      return val !== undefined ? val : null;
     }),
   }));
 

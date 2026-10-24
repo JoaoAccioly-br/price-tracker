@@ -70,17 +70,24 @@ CUSTOM_HEADERS: dict = {
 }
 
 
+def _matches_domain(netloc: str, domain: str) -> bool:
+    """Verifica se o host da URL pertence exatamente ao domínio ou a um subdomínio legítimo."""
+    host = netloc.split(":")[0].lower().rstrip(".")
+    domain = domain.lower().rstrip(".")
+    return host == domain or host.endswith("." + domain)
+
+
 def scrape(url: str, css_selector: str | None = None,
            attempts: int = 3, retry_delay: tuple[float, float] = (3.0, 6.0)) -> PriceResult:
     """Baixa e parseia. Se houver API integrada (Mercado Livre e Shopee), usa prioritariamente."""
-    netloc = urlparse(url).netloc
+    netloc = (urlparse(url).hostname or urlparse(url).netloc).lower()
 
     # 1. Consulta exclusiva à API oficial do Mercado Livre (sem scraping HTTP)
-    if "mercadolivre.com.br" in netloc:
+    if _matches_domain(netloc, "mercadolivre.com.br"):
         return mercadolivre.scrape_ml(url)
 
     # 2. Consulta exclusiva à API oficial de Afiliados da Shopee (GraphQL)
-    if "shopee.com.br" in netloc:
+    if _matches_domain(netloc, "shopee.com.br"):
         return shopee.scrape_shopee(url, css_selector)
 
     # 3. Scraping HTTP tradicional direto
@@ -95,7 +102,7 @@ def scrape(url: str, css_selector: str | None = None,
             time.sleep(random.uniform(*retry_delay))
         try:
             html = fetch_html(url, headers=headers)
-            if "aliexpress.com" in netloc:
+            if _matches_domain(netloc, "aliexpress.com"):
                 result = parser(html, css_selector, url=url)
             else:
                 result = parser(html, css_selector)

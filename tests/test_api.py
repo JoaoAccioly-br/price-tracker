@@ -70,3 +70,35 @@ def test_flow(client):
     del_res = client.delete(f"/api/products/{pid}")
     assert del_res.status_code == 200
     assert len(client.get("/api/products").json()) == 0
+
+
+def test_ssrf_blocked_on_listing_creation(client):
+    pid = client.post("/api/products", json={"name": "Produto SSRF"}).json()["id"]
+    for bad_url in (
+        "http://127.0.0.1:8000/admin",
+        "http://localhost/secret",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://192.168.1.1/router",
+        "http://[::1]:8080/internal",
+    ):
+        res = client.post("/api/listings", json={"product_id": pid, "store": "interna", "url": bad_url})
+        assert res.status_code == 422
+
+
+def test_auth_fail_closed_when_partial_credentials(client, monkeypatch):
+    from app import main as main_mod
+
+    # Se apenas a senha for configurada (e o usuário esquecido), deve bloquear (401)
+    monkeypatch.setattr(main_mod, "APP_USERNAME", "")
+    monkeypatch.setattr(main_mod, "APP_PASSWORD", "supersecret")
+    assert client.get("/api/products").status_code == 401
+    assert client.get("/api/health").status_code == 200
+
+
+def test_domain_matching_prevents_subdomain_spoofing():
+    from app.scrapers import _matches_domain
+
+    assert _matches_domain("www.mercadolivre.com.br", "mercadolivre.com.br") is True
+    assert _matches_domain("mercadolivre.com.br", "mercadolivre.com.br") is True
+    assert _matches_domain("mercadolivre.com.br.evil.com", "mercadolivre.com.br") is False
+    assert _matches_domain("evilmercadolivre.com.br", "mercadolivre.com.br") is False

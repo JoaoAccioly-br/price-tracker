@@ -87,3 +87,37 @@ def test_notify_price_drop_dispatch(monkeypatch):
         )
         assert results.get("telegram") is True
         mock_tg.assert_called_once()
+
+
+def test_send_telegram_escapes_analysis_label_and_redacts_token_on_error(caplog):
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"ok": True}
+
+    with patch("httpx.post", return_value=mock_resp) as mock_post:
+        send_telegram(
+            product_name="Mouse",
+            store="Loja",
+            url="https://loja.com/m",
+            current_price=100.0,
+            target_price=120.0,
+            bot_token="SECRET_TOKEN_999",
+            chat_id="123",
+            analysis={"label": "<script>evil</script>", "description": "desc <b>x</b>"},
+        )
+        sent_text = mock_post.call_args.kwargs["json"]["text"]
+        assert "<script>" not in sent_text
+        assert "&lt;script&gt;evil&lt;/script&gt;" in sent_text
+
+    with patch("httpx.post", side_effect=RuntimeError("Erro em https://api.telegram.org/botSECRET_TOKEN_999/sendMessage")):
+        ok = send_telegram(
+            product_name="Mouse",
+            store="Loja",
+            url="https://loja.com/m",
+            current_price=100.0,
+            target_price=120.0,
+            bot_token="SECRET_TOKEN_999",
+            chat_id="123",
+        )
+        assert ok is False
+        assert "SECRET_TOKEN_999" not in caplog.text

@@ -24,6 +24,32 @@ function safeUrl(url) {
   return '#';
 }
 
+const _fmtFullBR = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
+const _fmtShortBR = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  day: '2-digit',
+  month: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+function debounce(fn, wait = 150) {
+  let timer = null;
+  return function (...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), wait);
+  };
+}
+
 /**
  * Converte data/hora salva em UTC para o Horário de Brasília (America/Sao_Paulo, UTC-3).
  * Exemplo: "2026-10-10 20:30:15" -> "10/10/2026 17:30:15"
@@ -34,15 +60,7 @@ function formatDateTimeBR(utcStr) {
   const iso = clean.replace(' ', 'T') + (clean.endsWith('Z') ? '' : 'Z');
   const d = new Date(iso);
   if (isNaN(d.getTime())) return clean;
-  return d.toLocaleString('pt-BR', {
-    timeZone: 'America/Sao_Paulo',
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).replace(', ', ' ');
+  return _fmtFullBR.format(d).replace(', ', ' ');
 }
 
 /**
@@ -55,11 +73,5 @@ function formatDateTimeShortBR(utcStr) {
   const iso = clean.replace(' ', 'T') + (clean.endsWith('Z') ? '' : 'Z');
   const d = new Date(iso);
   if (isNaN(d.getTime())) return clean;
-  return d.toLocaleString('pt-BR', {
-    timeZone: 'America/Sao_Paulo',
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).replace(', ', ' ');
+  return _fmtShortBR.format(d).replace(', ', ' ');
 }

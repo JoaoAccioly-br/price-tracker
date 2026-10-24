@@ -10,6 +10,7 @@ Variáveis de ambiente opcionais:
 import asyncio
 import base64
 import binascii
+from datetime import datetime, timedelta, timezone
 import json
 import os
 import secrets
@@ -26,6 +27,7 @@ from pydantic import BaseModel, Field, field_validator
 from .analyzer import analyze_price_history, get_product_analysis
 from .collector import add_listener, collect_all, get_status, remove_listener
 from .db import DBConflictError, get_conn, init_db
+from .scrapers.base import UnsafeURLError, validate_url_host
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -58,22 +60,28 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 def _is_authorized(header: str | None) -> bool:
-    """Valida o header 'Authorization: Basic ...' em tempo constante."""
-    if not header or not header.lower().startswith("basic "):
-        return False
-    try:
-        decoded = base64.b64decode(header[6:].strip()).decode("utf-8")
-    except (binascii.Error, UnicodeDecodeError):
-        return False
-    user, _, password = decoded.partition(":")
+    """Valida o header 'Authorization: Basic ...' em tempo constante e fail-closed."""
+    user, password = "", ""
+    valid_format = False
+    if header and header.lower().startswith("basic "):
+        try:
+            decoded = base64.b64decode(header[6:].strip()).decode("utf-8")
+            user, _, password = decoded.partition(":")
+            valid_format = True
+        except (binascii.Error, UnicodeDecodeError):
+            valid_format = False
+
     # compare_digest evita ataques de timing; '&' (não 'and') para comparar sempre os dois
-    return secrets.compare_digest(user, APP_USERNAME) & secrets.compare_digest(password, APP_PASSWORD)
+    user_ok = secrets.compare_digest(user, APP_USERNAME)
+    pass_ok = secrets.compare_digest(password, APP_PASSWORD)
+    both_configured = bool(APP_USERNAME and APP_PASSWORD)
+    return bool(user_ok & pass_ok & valid_format & both_configured)
 
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
-    # 1) Autenticação opcional (ativa só se APP_USERNAME e APP_PASSWORD estiverem definidos)
-    if APP_USERNAME and APP_PASSWORD and request.url.path not in PUBLIC_PATHS:
+    # 1) Autenticação fail-closed: ativa se APP_USERNAME OU APP_PASSWORD estiverem definidos
+    if (APP_USERNAME or APP_PASSWORD) and request.url.path not in PUBLIC_PATHS:
         if not _is_authorized(request.headers.get("authorization")):
             return PlainTextResponse(
                 "Autenticação necessária", status_code=401,
@@ -82,11 +90,22 @@ async def security_middleware(request: Request, call_next):
 
     response = await call_next(request)
 
-    # 2) Cabeçalhos de segurança básicos
+    # 2) Cabeçalhos de segurança (defesa em profundidade)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")  # impede clickjacking via iframe
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
+        "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none';",
+    )
     if request.url.path.startswith("/api/"):
         response.headers.setdefault("Cache-Control", "no-store")
     return response
@@ -97,7 +116,10 @@ def _validate_http_url(value: str) -> str:
     value = value.strip()
     if not value.lower().startswith(("http://", "https://")):
         raise ValueError("A URL deve começar com http:// ou https://")
-    return value
+    try:
+        return validate_url_host(value)
+    except UnsafeURLError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 class ProductIn(BaseModel):
@@ -151,13 +173,17 @@ def list_products():
                 ORDER BY l.id"""
         ).fetchall()
 
-        # Leituras históricas para cálculo de métricas de 30 e 60 dias (promoção falsa / real)
+        # Leituras históricas dos últimos 65 dias para cálculo de métricas de 30 e 60 dias
+        # (evita Full Table Scan e consumo excessivo de RAM com histórico antigo)
+        cutoff_65d = (datetime.now(timezone.utc) - timedelta(days=65)).strftime("%Y-%m-%d %H:%M:%S")
         price_rows = conn.execute(
             """SELECT l.product_id, pr.price, pr.final_price, pr.checked_at
                FROM prices pr
                JOIN listings l ON l.id = pr.listing_id
                WHERE (pr.available = 1 OR pr.available IS NULL)
-               ORDER BY pr.checked_at ASC"""
+                 AND pr.checked_at >= ?
+               ORDER BY pr.checked_at ASC""",
+            (cutoff_65d,),
         ).fetchall()
     finally:
         conn.close()
@@ -222,14 +248,20 @@ def product_analysis(product_id: int):
 
 
 @app.get("/api/products/{product_id}/history")
-def price_history(product_id: int):
+def price_history(product_id: int, limit: int = Query(2000, ge=1, le=10000)):
     conn = get_conn()
     try:
         rows = conn.execute(
-            """SELECT l.store, pr.price, pr.final_price, pr.coupon_code, pr.available, pr.checked_at
-               FROM prices pr JOIN listings l ON l.id = pr.listing_id
-               WHERE l.product_id = ? ORDER BY pr.checked_at""",
-            (product_id,),
+            """SELECT store, price, final_price, coupon_code, available, checked_at
+               FROM (
+                   SELECT pr.id, l.store, pr.price, pr.final_price, pr.coupon_code, pr.available, pr.checked_at
+                   FROM prices pr JOIN listings l ON l.id = pr.listing_id
+                   WHERE l.product_id = ?
+                   ORDER BY pr.checked_at DESC, pr.id DESC
+                   LIMIT ?
+               ) sub
+               ORDER BY checked_at ASC, id ASC""",
+            (product_id, limit),
         ).fetchall()
     finally:
         conn.close()

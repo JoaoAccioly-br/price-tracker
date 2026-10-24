@@ -210,9 +210,35 @@ def parse_html(html: str, css_selector: str | None = None) -> PriceResult:
 # ---------------------------------------------------------------------- fetch
 MAX_HTML_BYTES = 8 * 1024 * 1024  # 8 MB: páginas de produto raramente passam de 2 MB
 
+_FORBIDDEN_HOSTS = {"localhost", "localhost.localdomain", "metadata.google.internal"}
+_FORBIDDEN_SUFFIXES = (".localhost", ".local", ".internal", ".home.arpa")
+
 
 class UnsafeURLError(ValueError):
     """URL aponta para rede interna / esquema não permitido (proteção contra SSRF)."""
+
+
+def validate_url_host(url: str) -> str:
+    """Valida sintaxe HTTP(S) e bloqueia hosts internos ou IPs privados literais (sem exigir DNS ativo)."""
+    value = (url or "").strip()
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise UnsafeURLError(f"URL não permitida: {url!r}")
+
+    host = parsed.hostname.lower().rstrip(".")
+    if host in _FORBIDDEN_HOSTS or host.endswith(_FORBIDDEN_SUFFIXES):
+        raise UnsafeURLError(f"Host interno não permitido: {host}")
+
+    # Se o host já for um literal de IP (IPv4 ou IPv6), valida imediatamente
+    try:
+        ip = ipaddress.ip_address(host.split("%")[0])
+    except ValueError:
+        ip = None
+
+    if ip is not None and not ip.is_global:
+        raise UnsafeURLError(f"Host {host} aponta para IP não público ({ip})")
+
+    return value
 
 
 def assert_public_url(url: str) -> None:
@@ -222,9 +248,8 @@ def assert_public_url(url: str) -> None:
     http://127.0.0.1:xxxx, http://169.254.169.254 (metadados da cloud) ou IPs
     da rede interna e usar o coletor para sondar serviços privados (SSRF).
     """
+    validate_url_host(url)
     parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        raise UnsafeURLError(f"URL não permitida: {url!r}")
     try:
         infos = socket.getaddrinfo(parsed.hostname, parsed.port or None, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
@@ -240,24 +265,56 @@ def _check_request(request: httpx.Request) -> None:
     assert_public_url(str(request.url))
 
 
+def _verify_connected_peer(resp: httpx.Response) -> None:
+    """Proteção contra DNS Rebinding (TOCTOU): confere o IP real do socket conectado."""
+    stream = resp.extensions.get("network_stream")
+    if stream is None:
+        return
+    sock = stream.get_extra_info("socket")
+    if sock is None:
+        return
+    try:
+        peer = sock.getpeername()
+        if isinstance(peer, tuple) and peer:
+            ip = ipaddress.ip_address(str(peer[0]).split("%")[0])
+            if not ip.is_global:
+                raise UnsafeURLError(f"Conexão bloqueada para IP não público ({ip}) [DNS Rebinding]")
+    except UnsafeURLError:
+        raise
+    except Exception:
+        pass
+
+
+_SHARED_HTTP_CLIENT: httpx.Client | None = None
+
+
+def _get_http_client() -> httpx.Client:
+    global _SHARED_HTTP_CLIENT
+    if _SHARED_HTTP_CLIENT is None or _SHARED_HTTP_CLIENT.is_closed:
+        _SHARED_HTTP_CLIENT = httpx.Client(
+            headers=HEADERS,
+            timeout=20,
+            follow_redirects=True,
+            max_redirects=5,
+            event_hooks={"request": [_check_request]},
+        )
+    return _SHARED_HTTP_CLIENT
+
+
 def fetch_html(url: str, headers: dict | None = None) -> str:
     assert_public_url(url)
     req_headers = {**HEADERS, **(headers or {})}
-    with httpx.Client(
-        headers=req_headers, timeout=20, follow_redirects=True, max_redirects=5,
-        event_hooks={"request": [_check_request]},
-    ) as client:
-        with client.stream("GET", url) as resp:
-            resp.raise_for_status()
-            chunks, size = [], 0
-            for chunk in resp.iter_bytes():
-                size += len(chunk)
-                if size > MAX_HTML_BYTES:
-                    raise ValueError(f"Resposta maior que {MAX_HTML_BYTES} bytes")
-                chunks.append(chunk)
-            return b"".join(chunks).decode(resp.encoding or "utf-8", errors="replace")
-
-
+    client = _get_http_client()
+    with client.stream("GET", url, headers=req_headers) as resp:
+        _verify_connected_peer(resp)
+        resp.raise_for_status()
+        chunks, size = [], 0
+        for chunk in resp.iter_bytes():
+            size += len(chunk)
+            if size > MAX_HTML_BYTES:
+                raise ValueError(f"Resposta maior que {MAX_HTML_BYTES} bytes")
+            chunks.append(chunk)
+        return b"".join(chunks).decode(resp.encoding or "utf-8", errors="replace")
 
 
 def scrape(url: str, css_selector: str | None = None) -> PriceResult:
