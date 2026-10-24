@@ -232,16 +232,23 @@ def get_product_analysis(product_id: int, current_price: float | None = None, co
     try:
         cutoff_65d = (datetime.now(timezone.utc) - timedelta(days=65)).strftime("%Y-%m-%d %H:%M:%S")
         rows = conn.execute(
-            """SELECT pr.price, pr.final_price, pr.checked_at
-               FROM prices pr
-               JOIN listings l ON l.id = pr.listing_id
-               WHERE l.product_id = ?
+            """SELECT my_l.id AS listing_id, pr.price, pr.final_price, pr.checked_at
+               FROM listings my_l
+               JOIN listings sib ON sib.id = my_l.id OR (my_l.canonical_key IS NOT NULL AND my_l.canonical_key != '' AND sib.canonical_key = my_l.canonical_key)
+               JOIN prices pr ON pr.listing_id = sib.id
+               WHERE my_l.product_id = ?
                  AND (pr.available = 1 OR pr.available IS NULL)
                  AND pr.checked_at >= ?
-               ORDER BY pr.checked_at ASC""",
+               ORDER BY pr.checked_at ASC, pr.id ASC""",
             (product_id, cutoff_65d),
         ).fetchall()
-        records = [dict(r) for r in rows]
+        seen = set()
+        records = []
+        for r in rows:
+            key = (r["listing_id"], r["checked_at"])
+            if key not in seen:
+                seen.add(key)
+                records.append(dict(r))
         return analyze_price_history(records, current_price=current_price)
     finally:
         if close_at_end:

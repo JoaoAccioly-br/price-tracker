@@ -492,3 +492,76 @@ def parse(html: str, css_selector: str | None = None) -> PriceResult:
         coupon_code=code,
         final_price=final or price,
     )
+
+
+def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
+    """Busca ofertas no Mercado Livre via API oficial (catálogo /products/search com fallback para /sites/MLB/search)."""
+    if not keyword or not keyword.strip():
+        return []
+
+    token = get_access_token()
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    results: list[dict] = []
+    # 1. Tenta buscar em /products/search (produtos de catálogo com BuyBox)
+    try:
+        url_products = "https://api.mercadolibre.com/products/search"
+        params_products = {
+            "status": "active",
+            "site_id": "MLB",
+            "q": keyword.strip(),
+            "limit": limit,
+        }
+        resp = _http_get(url_products, params=params_products, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            for item in data.get("results", []):
+                prod_id = item.get("id")
+                name = item.get("name")
+                permalink = item.get("permalink") or (f"https://www.mercadolivre.com.br/p/{prod_id}" if prod_id else "")
+                if not permalink or not name:
+                    continue
+                price = None
+                bb = item.get("buy_box_winner")
+                if bb and bb.get("price") is not None:
+                    price = parse_brl(bb.get("price"))
+                results.append({
+                    "store": "Mercado Livre",
+                    "title": name.strip(),
+                    "url": permalink.strip(),
+                    "price": price,
+                    "source": "ml:api",
+                })
+    except Exception as exc:
+        log.warning("Erro ao buscar em /products/search do Mercado Livre para '%s': %s", keyword, exc)
+
+    if results:
+        return results[:limit]
+
+    # 2. Fallback: /sites/MLB/search (anúncios gerais)
+    try:
+        url_search = "https://api.mercadolibre.com/sites/MLB/search"
+        params_search = {"q": keyword.strip(), "limit": limit}
+        resp = _http_get(url_search, params=params_search, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            for item in data.get("results", []):
+                title = item.get("title")
+                permalink = item.get("permalink")
+                if not permalink or not title:
+                    continue
+                raw_price = item.get("price")
+                price = parse_brl(raw_price) if raw_price is not None else None
+                results.append({
+                    "store": "Mercado Livre",
+                    "title": title.strip(),
+                    "url": permalink.strip(),
+                    "price": price,
+                    "source": "ml:api",
+                })
+    except Exception as exc:
+        log.warning("Erro ao buscar em /sites/MLB/search do Mercado Livre para '%s': %s", keyword, exc)
+
+    return results[:limit]

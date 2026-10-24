@@ -10,6 +10,7 @@ import json
 import os
 import re
 import socket
+import urllib.parse
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -205,6 +206,81 @@ def parse_html(html: str, css_selector: str | None = None) -> PriceResult:
     res.coupon_code = code
     res.final_price = final or res.price
     return res
+
+
+# ---------------------------------------------------------------- canonicalize
+TRACKING_PARAMS = {
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "fbclid", "gclid", "sp_atk", "xptdk", "matt_tool", "matt_word",
+    "tracking_id", "ref", "ref_", "spm", "aff_fcid", "aff_fsk",
+    "aff_platform", "sk", "aff_trace_key", "terminal_id", "afsmartredirect",
+}
+
+
+def canonicalize_url(url: str) -> str:
+    """Normaliza URLs para chave canônica única por item/oferta."""
+    url = (url or "").strip()
+    if not url:
+        return ""
+
+    parsed = urllib.parse.urlparse(url)
+    if not parsed.scheme and not parsed.netloc and url:
+        parsed = urllib.parse.urlparse("https://" + url)
+
+    hostname = (parsed.hostname or "").lower()
+    dom = hostname
+    for prefix in ("www.", "m.", "pt."):
+        if dom.startswith(prefix):
+            dom = dom[len(prefix):]
+            break
+
+    # 1. Shopee (shopee.com.br ou subdomínios)
+    if dom == "shopee.com.br" or dom.endswith(".shopee.com.br"):
+        m = re.search(r"-i\.(\d+)\.(\d+)", url)
+        if not m:
+            m = re.search(r"/product/(\d+)/(\d+)", url)
+        if m:
+            return f"shopee:{m.group(1)}:{m.group(2)}"
+
+    # 2. Mercado Livre (mercadolivre.com.br ou subdomínios)
+    if dom == "mercadolivre.com.br" or dom.endswith(".mercadolivre.com.br"):
+        try:
+            from .mercadolivre import extract_candidate_ids
+            candidate_ids = extract_candidate_ids(url)
+            if candidate_ids:
+                return f"ml:{':'.join(candidate_ids)}"
+        except ImportError:
+            pass
+
+    # 3. Amazon (amazon.com.br ou amazon.com)
+    if dom in ("amazon.com.br", "amazon.com") or dom.endswith(".amazon.com.br") or dom.endswith(".amazon.com"):
+        m = re.search(r"/(?:dp|gp/product)/([A-Z0-9]{10})(?:[/?#]|$)", url, re.IGNORECASE)
+        if m:
+            return f"amazon:{m.group(1).upper()}"
+
+    # 4. AliExpress (aliexpress.com ou subdomínios)
+    if dom == "aliexpress.com" or dom.endswith(".aliexpress.com"):
+        m = re.search(r"/item/(\d+)\.html", url, re.IGNORECASE)
+        if m:
+            return f"aliexpress:{m.group(1)}"
+
+    # 5. Demais URLs (Kabum, Pichau, lojas genéricas)
+    path = parsed.path or ""
+    path = re.sub(r"/ref=[^/?#]*$", "", path)
+    if path != "/" and path.endswith("/"):
+        path = path.rstrip("/")
+
+    qs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    filtered = [(k, v) for k, v in qs if k.lower() not in TRACKING_PARAMS]
+    filtered.sort(key=lambda x: (x[0], x[1]))
+    query_str = urllib.parse.urlencode(filtered)
+
+    scheme = parsed.scheme.lower() or "https"
+    host = (parsed.netloc or "").lower()
+
+    if query_str:
+        return f"{scheme}://{host}{path}?{query_str}"
+    return f"{scheme}://{host}{path}"
 
 
 # ---------------------------------------------------------------------- fetch

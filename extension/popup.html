@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Price Tracker — Captura Rápida</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- CABEÇALHO -->
+    <header class="popup-header">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
+            <polyline points="17 6 23 6 23 12"></polyline>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>Price <span>Tracker</span></h1>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span id="connection-status-dot" class="status-dot disconnected" title="Desconectado"></span>
+        <button type="button" id="btn-header-account" class="btn-icon hidden" title="Opções de conta">
+          <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+            <polyline points="16 17 21 12 16 7"></polyline>
+            <line x1="21" y1="12" x2="9" y2="12"></line>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- NOTIFICAÇÃO / FEEDBACK BANNER -->
+    <div id="notification-box" class="notification hidden"></div>
+
+    <!-- TELA 1: AUTENTICAÇÃO / CONEXÃO -->
+    <main id="view-auth" class="view-panel">
+      <div class="auth-intro">
+        <h2>Conecte seu Rastreador</h2>
+        <p>Vincule a extensão à sua conta do Price Tracker para adicionar links com 1 clique.</p>
+      </div>
+
+      <div class="tab-switch">
+        <button type="button" id="tab-btn-token" class="tab-switch-btn active">Token da Extensão</button>
+        <button type="button" id="tab-btn-login" class="tab-switch-btn">E-mail e Senha</button>
+      </div>
+
+      <!-- MODO TOKEN -->
+      <div id="subview-token" class="subview-content">
+        <p class="tab-hint">
+          Copie seu token na tela <b>Minha Conta</b> do Price Tracker (ideal para login com Google).
+        </p>
+        <div class="form-group">
+          <label for="input-auth-token">Token de Acesso</label>
+          <input type="text" id="input-auth-token" placeholder="Cole o token aqui..." autocomplete="off">
+        </div>
+      </div>
+
+      <!-- MODO EMAIL / SENHA -->
+      <div id="subview-creds" class="subview-content hidden">
+        <p class="tab-hint">Entre com as mesmas credenciais que usa no Price Tracker.</p>
+        <div class="form-group">
+          <label for="input-auth-email">E-mail</label>
+          <input type="email" id="input-auth-email" placeholder="seu@email.com" autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label for="input-auth-pass">Senha</label>
+          <input type="password" id="input-auth-pass" placeholder="••••••••" autocomplete="current-password">
+        </div>
+      </div>
+
+      <!-- CONFIGURAÇÃO DO SERVIDOR (EXPANSÍVEL) -->
+      <div class="server-config-section">
+        <button type="button" id="btn-toggle-server" class="btn-text-link">
+          <span id="server-toggle-icon">▸</span> Servidor Price Tracker: <span id="current-server-label">http://localhost:8000</span>
+        </button>
+        <div id="server-input-wrapper" class="hidden">
+          <div class="form-group" style="margin-top: 8px;">
+            <label for="input-server-url">URL da API do Servidor</label>
+            <input type="url" id="input-server-url" value="http://localhost:8000" placeholder="http://localhost:8000">
+          </div>
+        </div>
+      </div>
+
+      <button type="button" id="btn-connect" class="btn-primary full-width" style="margin-top: 14px;">
+        <span>Conectar Extensão</span>
+      </button>
+    </main>
+
+    <!-- TELA 2: CAPTURA E ADIÇÃO DE PRODUTO -->
+    <main id="view-capture" class="view-panel hidden">
+      <!-- INFO DA ABA ATIVA -->
+      <div class="detected-page-card">
+        <div class="page-meta-header">
+          <span class="store-badge" id="detected-store-badge">Detectando Loja…</span>
+          <span class="user-pill" id="header-user-email">usuario@...</span>
+        </div>
+        <div class="page-title-preview" id="detected-page-title">Carregando aba ativa…</div>
+      </div>
+
+      <!-- ABAS DE CAPTURA -->
+      <div class="tab-switch" style="margin-top: 12px;">
+        <button type="button" id="btn-mode-new" class="tab-switch-btn active">Novo Produto</button>
+        <button type="button" id="btn-mode-existing" class="tab-switch-btn">Vincular a Existente</button>
+      </div>
+
+      <!-- MODO 1: NOVO PRODUTO + LINK -->
+      <div id="section-new-product" class="capture-form-section">
+        <div class="form-group">
+          <label for="input-name">Nome do Produto</label>
+          <input type="text" id="input-name" placeholder="Ex.: Notebook Acer Aspire 5" required>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="select-category">Categoria</label>
+            <select id="select-category">
+              <option value="Notebook" selected>Notebook</option>
+              <option value="Monitor">Monitor</option>
+              <option value="Periférico">Periférico</option>
+              <option value="Hardware">Hardware</option>
+              <option value="Smartphone">Smartphone</option>
+              <option value="Outro">Outro</option>
+            </select>
+          </div>
+          <div class="form-group flex-1">
+            <label for="input-target-price">Preço Alvo (R$)</label>
+            <input type="number" id="input-target-price" step="0.01" placeholder="Opcional">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="input-store">Loja</label>
+          <input type="text" id="input-store" placeholder="Ex.: Shopee, Amazon, Mercado Livre" required>
+        </div>
+
+        <div class="form-group">
+          <label for="input-url">URL da Página</label>
+          <input type="url" id="input-url" placeholder="https://..." required>
+        </div>
+      </div>
+
+      <!-- MODO 2: VINCULAR A PRODUTO EXISTENTE -->
+      <div id="section-existing-product" class="capture-form-section hidden">
+        <div class="form-group">
+          <label for="select-existing-product">Selecione o Produto</label>
+          <select id="select-existing-product">
+            <option value="">Carregando produtos cadastrados…</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="input-existing-store">Loja</label>
+          <input type="text" id="input-existing-store" placeholder="Ex.: Shopee, Amazon, Mercado Livre" required>
+        </div>
+
+        <div class="form-group">
+          <label for="input-existing-url">URL da Página</label>
+          <input type="url" id="input-existing-url" placeholder="https://..." required>
+        </div>
+      </div>
+
+      <!-- AÇÕES -->
+      <div class="actions-group">
+        <button type="button" id="btn-save-extension" class="btn-primary full-width">
+          <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+          </svg>
+          <span id="btn-save-text">Salvar no Price Tracker</span>
+        </button>
+        <button type="button" id="btn-open-site" class="btn-secondary full-width">
+          <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <line x1="10" y1="14" x2="21" y2="3"></line>
+          </svg>
+          <span>Abrir tela de cadastro completa no site</span>
+        </button>
+      </div>
+    </main>
+
+    <!-- SPINNER OVERLAY -->
+    <div id="loading-overlay" class="loading-overlay hidden">
+      <div class="spinner"></div>
+      <span id="loading-msg">Processando…</span>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

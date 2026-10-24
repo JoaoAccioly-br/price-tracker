@@ -1,94 +1,103 @@
-# Price Tracker — Resumo do projeto (para agentes)
+# Price Tracker — Resumo do Projeto (para Agentes)
 
-Rastreador de preços de produtos e periféricos em e-commerces (Mercado Livre, AliExpress, Amazon, Kabum, Pichau, etc.). Faz consultas via API oficial (Mercado Livre) e scraping HTTP otimizado, armazena leituras em banco de dados híbrido (PostgreSQL Neon na nuvem / SQLite local) e exibe uma interface web responsiva em vanilla JS SPA com gráficos históricos e alertas em tempo real via Telegram.
+Rastreador inteligente de preços de produtos e periféricos em e-commerces (Mercado Livre, Shopee, AliExpress, Amazon, KaBuM!, Pichau, etc.). Opera com consultas a APIs oficiais (Mercado Livre BuyBox e Shopee Affiliate GraphQL), scraping HTTP calibrado e pesquisa semântica com Google AI Studio (Gemini). Armazena dados em banco híbrido (PostgreSQL Neon na nuvem ou SQLite local), oferecendo interface SPA moderna em Vanilla JS com Server-Sent Events (SSE), gráficos históricos interativos (Chart.js), alertas individuais no Telegram e extensão de navegador Manifest V3.
 
 ```
-cron / botão na UI → collector → scrapers / API ML → DB (Neon / SQLite) → FastAPI → SPA (static/index.html)
-                                     ↓
-                          Notificador Telegram Bot
+Extensão Chrome / Botão UI / Cron → Collector / IA Gemini → Scrapers & APIs → DB (Neon / SQLite) → FastAPI → SPA (static/)
+                                                                     ↓
+                                                       Alertas Individuais Telegram
 ```
 
-## Stack
-- **Backend**: Python 3.12, FastAPI + Uvicorn, httpx + BeautifulSoup4
-- **Banco de Dados Híbrido**: 
+---
+
+## 1. Stack Tecnológica
+- **Backend**: Python 3.12, FastAPI + Uvicorn, httpx + BeautifulSoup4.
+- **Banco de Dados Híbrido**:
   - PostgreSQL (Neon) em produção via `psycopg` (v3) quando `DATABASE_URL` estiver definida.
-  - SQLite (`data/tracker.db`) para desenvolvimento local/testes unitários.
-  - Sem ORM pesado: camada de abstração em `app/db.py` com compatibilidade de cursores (`Row`/`dict`), transações, migrations automáticas e tabela `app_settings` com `get_setting` / `set_setting`.
-- **Scraping & Coleta**:
-  - 100% HTTP/JSON assíncrono e ultra-leve. **Playwright e navegadores headless foram totalmente removidos** para economizar memória RAM e rodar com folga no plano gratuito do Render (512MB RAM).
-  - **Mercado Livre**: 100% via API Oficial (sem web scraping/HTML fallback para evitar WAF). Suporte a catálogo (`/products/{id}`), ofertas de catálogo (`/products/{id}/items`), anúncios diretos e multiget oficial (`/items?ids={id}`). OAuth2 com renovação automática de tokens via `refresh_token` de 6 meses persistido no banco.
-  - **Shopee Brasil**: 100% via API Oficial de Afiliados (GraphQL `productOfferV2`) autenticada com HMAC-SHA256 usando `SHOPEE_APP_ID` e `SHOPEE_APP_SECRET`.
-  - **AliExpress**: Extração via parâmetro `pdp_npi` da URL copiada da busca/compartilhamento (ignora o shell CSR vazio).
-  - **Amazon**: Parser especializado com seletores modernos (`.priceToPay`, `#price_inside_buybox`, `#newBuyBoxPrice`, `span.apexPriceToPay`), busca de frações em `.a-price-whole`/`.a-price-fraction`, e detecção de desafios de CAPTCHA (`amazon:captcha`).
-- **Alertas & Notificações**:
-  - Módulo `app/notifier.py` com envio de notificações instantâneas exclusivamente via **Telegram Bot API** (HTTPS na porta 443, 100% gratuito e compatível com as restrições de porta de saída do Render). Lógica anti-spam e cooldown de 24h por produto implementada na tabela `products` (`last_alert_at`, `last_alert_price`).
-- **Frontend**: Single-Page Application (SPA) em HTML5/Vanilla JS modular, CSS centralizado (paleta D·Rosa), Chart.js (CDN) e Font Awesome 6.5.2 (CDN).
-- **Segurança**:
-  - Sanitização rigorosa contra XSS com `static/js/utils.js` (`escapeHtml` e `safeUrl`).
-  - Imagem Docker rodando sob usuário não-privilegiado `app (UID 10001)`.
-  - Autenticação HTTP Basic opcional via `APP_USERNAME` e `APP_PASSWORD`.
+  - SQLite local (`data/tracker.db`) para desenvolvimento e suíte de testes.
+  - Abstração em `app/db.py` com suporte transparente a cursores (`Row`/`dict`), transações, `RETURNING id`, pool de conexões com ping anti-idle e tabela chave-valor `app_settings`.
+- **Autenticação & Segurança**:
+  - `app/auth.py`: hash de senha com `scrypt`, sessão via cookie `HttpOnly` com assinatura `HMAC-SHA256` (`pt_session`).
+  - Google Identity Services (OAuth2 GIS): autenticação via `POST /api/auth/google` validada diretamente contra `https://oauth2.googleapis.com/tokeninfo`.
+  - Extensão Web: autenticação via Bearer token de 90 dias gerado por usuário.
+  - Sanitização de saída XSS via `static/js/utils.js` (`escapeHtml`, `safeUrl`) e cabeçalhos de segurança (CSP, CORS, frame-ancestors).
+- **Inteligência Artificial (Google AI Studio / Gemini)**:
+  - `app/ai.py`: integração REST com Gemini (`gemini-2.5-flash`), utilizando **Google Search Grounding** para descoberta de links na web e curadoria semântica anti-acessórios com fallback heurístico.
+- **Frontend**: SPA modular em HTML5 e Vanilla JS (sem frameworks pesados), CSS centralizado (paleta D·Rosa), Chart.js (CDN) e Font Awesome 6.5.2 (CDN).
 - **CI/CD & Deploy**:
-  - GitHub Actions (`.github/workflows/deploy.yml`): testes automatizados, build multi-stage Docker para GHCR, trigger de deploy no Render via webhook.
-  - Dependabot (`.github/dependabot.yml`): atualizações automáticas semanais para pip, docker e actions.
+  - GitHub Actions (`.github/workflows/deploy.yml`): matriz com job `test` executando Pytest contra SQLite e contra PostgreSQL em container de serviço (`postgres:16-alpine`), build multi-stage Docker para GHCR e deploy automático na branch `main`.
 
 ---
 
-## Estrutura do Projeto
-| Caminho | Papel |
-|---|---|
-| `app/db.py` | Camada de conexão híbrida (Neon PostgreSQL ou SQLite local), schemas DDL, cursores, transações, campos de alerta e tabela `app_settings`. |
-| `app/migrate_to_neon.py` | Script utilitário para migrar dados históricos do SQLite local para o PostgreSQL na Neon. |
-| `app/scrapers/base.py` | `PriceResult`, `parse_brl()`, `parse_html()`, `fetch_html()` e detecção de cupons. |
-| `app/scrapers/__init__.py` | Roteador de scrapers: rota exclusiva para API do Mercado Livre (`scrape_ml`), API da Shopee (`scrape_shopee`), e headers dedicados para Amazon/Kabum. |
-| `app/scrapers/shopee.py` | Consulta oficial via Shopee Affiliate Open API (GraphQL `productOfferV2`) com assinatura SHA256. |
-| `app/scrapers/amazon.py` | Parser específico para Amazon: seletores modernos, varredura de frações e detecção de CAPTCHA. |
-| `app/scrapers/aliexpress.py` | Parser específico para AliExpress: extração de preço e promoção via parâmetro `pdp_npi` da URL e título via `og:title`. |
-| `app/scrapers/mercadolivre.py` | Consulta exclusiva via API oficial: multiget `/items?ids=...`, `/products/...`, extração ampla de IDs (`extract_candidate_ids`), e OAuth com auto-refresh de 6 meses. |
-| `app/collector.py` | `collect_all()` — itera pelos links ativos, coleta preços, persiste na tabela `prices`, atualiza progresso SSE e dispara alertas no Telegram. |
-| `app/notifier.py` | Envio de mensagens de queda de preço para Telegram Bot (`notify_price_drop`, `send_telegram`) com cooldown anti-spam. |
-| `app/main.py` | Rotas FastAPI: CRUD de produtos e listings, disparo de coleta, status e SSE em tempo real (`/api/collect/events`), e mount de estáticos. |
-| `app/cli.py` | Interface de linha de comando para gerenciar produtos, listings e disparar coleta. |
-| `static/` | Frontend modular: `index.html`, `js/router.js`, `js/utils.js`, controladores (`produtos.js`, `painel.js`, `lojas.js`, `alertas.js`, `historico.js`, `cadastro.js`) e templates em `views/*.html`. |
-| `Dockerfile` | Multi-stage build com base `python:3.12-slim-bookworm`, sem root, healthcheck nativo com `urllib.request`. |
-| `tests/` | Suite com 48 testes unitários cobrindo todos os scrapers, API, banco e notificações. |
+## 2. Orquestração de Agentes e Modelos
+Em conformidade com `AGENTS.md` e `.agents/rules/orchestration.md`:
+- **Agente Principal (Tech Lead / Orquestrador)**:
+  - Analisa requisitos, projeta a arquitetura, interage com o usuário, define planos e valida suítes de testes e segurança.
+- **Subagentes de Implementação (`Model: "flash"`)**:
+  - Executados via `invoke_subagent` com Gemini Flash para implementação rápida e eficiente de código.
+  - Divisão estrita de escopos para execução paralela sem conflitos (ex.: Backend e Testes sob um subagente; Frontend sob outro subagente responsável por `static/`).
 
 ---
 
-## Modelo de Dados
-- **products**: `id`, `name`, `category`, `target_price`, `last_alert_at`, `last_alert_price`.
-- **listings**: `id`, `product_id`, `store`, `url`, `css_selector`, `active`. `UNIQUE(product_id, url)`. Exclusão em cascata configurada.
-- **prices**: histórico de leituras. `id`, `listing_id`, `price`, `available`, `coupon_code`, `final_price`, `checked_at` (UTC). Índice em `(listing_id, checked_at)`.
-- **app_settings**: chave-valor persistente para parâmetros do sistema e tokens (`key`, `value`, `updated_at`). Usado para guardar `ml_access_token`, `ml_token_expires_at`, `ml_refresh_token`, `shopee_app_id` e `shopee_app_secret`.
+## 3. Módulos e Funcionalidades Principais
+
+### A. Contas de Usuário & Autenticação (`app/auth.py`)
+- Cadastro (`POST /api/auth/register`), Login (`POST /api/auth/login`), Logout (`POST /api/auth/logout`), Identificação (`GET /api/auth/me`) e Atualização de Perfil (`PATCH /api/auth/profile`).
+- Isolamento por usuário em `products.user_id`. Usuários só visualizam e gerenciam seus próprios produtos e listagens.
+- Ao registrar o primeiro usuário em uma base legada com produtos sem dono, a aplicação associa os produtos órfãos ao novo usuário automaticamente.
+
+### B. Notificações Individuais no Telegram (`app/notifier.py`)
+- Alertas direcionados: o coletor consulta o `telegram_chat_id` do dono do produto e envia o alerta individualmente.
+- Descoberta automática de bot: consulta a API `/getMe` do Telegram para obter o `@username` público do bot, montando links diretos `https://t.me/<bot_username>?start=...` para facilitar a ativação.
+- Rota de teste (`POST /api/auth/telegram/test`) permitindo validar a configuração do Telegram com um clique.
+
+### C. Inteligência Artificial e Self-Healing Links (`app/ai.py`)
+- **Descoberta Inteligente (`POST /api/ai/discover-links`)**:
+  1. Busca oficial de ofertas na Shopee (GraphQL) e Mercado Livre (`/products/search`).
+  2. Pesquisa ampla na web com Google Search Grounding do Gemini para lojas como Amazon, KaBuM!, Magalu, etc.
+  3. Deduplicação canônica e filtragem de URLs já monitoradas pelo produto.
+  4. Curadoria semântica via prompt estruturado do Gemini descartando capas, películas, cabos, carregadores e modelos divergentes.
+- **Auto-Recuperação de Links Expirados (*Self-Healing*)**:
+  - Se um anúncio retornar indisponível ou esgotado durante a rotina do coletor (`app/collector.py`) ou sob chamada manual (`POST /api/listings/{id}/heal`), o sistema descobre um anúncio substituto ativo na mesma loja e atualiza a listagem de forma transparente.
+
+### D. Histórico Compartilhado de Links Canônicos & Extensão
+- **Canonicidade (`canonicalize_url`)**: URLs são padronizadas em chaves únicas (`shopee:{shop}:{item}`, `mercadolivre:{MLB}`, `amazon:{ASIN}`, `aliexpress:{item_id}`).
+- **Deduplicação de Coleta**: Se vários usuários acompanham a mesma oferta, o coletor faz apenas uma requisição HTTP e replica a inserção de preços.
+- **Aproveitamento Imediato de Histórico**: Um novo usuário que cadastra uma URL já monitorada no sistema herda imediatamente todo o histórico de preços existente.
+- **Preservação de Dados**: Excluir uma listagem apenas desvincula o produto (`product_id = NULL`), mantendo a chave canônica e o histórico de preços intactos para análises e outros usuários.
+- **Extensão de Navegador (`extension/`)**: Extensão Manifest V3 com popup e captura rápida de URL para envio com 1 clique ao backend via `/api/extension/quick-add`.
 
 ---
 
-## Integração Oficial do Mercado Livre (OAuth2 & Auto-Refresh)
-A API do Mercado Livre exige autenticação Bearer para endpoints de catálogo e itens. O `access_token` expira a cada 6 horas, enquanto o `refresh_token` é válido por **6 meses**.
-
-### Fluxo de Renovação Automática
-1. No Render ou `.env`, são configuradas as credenciais:
-   - `MERCADOLIVRE_CLIENT_ID`
-   - `MERCADOLIVRE_CLIENT_SECRET`
-   - `MERCADOLIVRE_REFRESH_TOKEN` (refresh token inicial)
-2. Durante a coleta, `mercadolivre.get_access_token()`:
-   - Verifica se há token válido e não-expirado salvo no banco (`app_settings`).
-   - Se estiver expirado ou a 5 minutos de expirar, chama `POST https://api.mercadolibre.com/oauth/token` com `grant_type=refresh_token`.
-   - Salva o novo `access_token` e o novo `refresh_token` (estendido por mais 6 meses) no banco de dados Neon.
-   - Caso receba `401 Unauthorized` durante uma requisição, invalida o cache do banco automaticamente.
-3. Se for fornecido apenas `MERCADOLIVRE_TOKEN` manual, este é usado diretamente.
-4. Suporta URLs de catálogo (`/p/MLB...`, `/up/MLBU...`), anúncios individuais e URLs com parâmetros (`pdp_filters=item_id:MLB...`).
+## 4. Estrutura de Arquivos
+| Caminho | Responsabilidade |
+| :--- | :--- |
+| `app/db.py` | Conexões híbridas (Postgres/SQLite), schemas DDL idempotentes, migrações automáticas e chave-valor `app_settings`. |
+| `app/auth.py` | Criptografia scrypt, HMAC-SHA256, cookies de sessão, Google GIS e injeção de dependência de usuário. |
+| `app/ai.py` | Google AI Studio (Gemini 2.5 Flash), Google Search Grounding, curadoria semântica e auto-recuperação de links. |
+| `app/main.py` | Endpoints FastAPI REST, rotas de autenticação, AI, produtos, listagens, extensão, SSE e fallback SPA. |
+| `app/collector.py` | Coleta assíncrona, deduplicação por chave canônica, auto-healing de anúncios e despacho de alertas individuais. |
+| `app/notifier.py` | Envio de mensagens ao Telegram com formatação MarkdownV2, descoberta de bot e proteção anti-spam. |
+| `app/analyzer.py` | Termômetro de promoção (30/60 dias): cálculo estatístico de promoções reais vs metade do dobro. |
+| `app/scrapers/` | Scrapers dedicados para Mercado Livre (API oficial), Shopee (GraphQL), AliExpress, Amazon e lojas gerais. |
+| `static/` | Frontend Vanilla JS SPA (`app.js`, `router.js`, controladores `produtos.js`, `conta.js`, `alertas.js`, etc.). |
+| `extension/` | Extensão Web Manifest V3 para navegadores Chrome/Edge. |
+| `tests/` | 99 testes unitários e de integração cobrindo auth, AI, scrapers, banco, links canônicos e notificações. |
+| `.github/workflows/deploy.yml` | Pipeline CI/CD: testes em SQLite e Postgres em serviço, build Docker e deploy no Render. |
 
 ---
 
-## Execução e Testes
+## 5. Modelo de Dados
+- **users**: `id`, `email` (UNIQUE), `name`, `password_hash`, `telegram_chat_id`, `created_at`, `updated_at`.
+- **products**: `id`, `user_id` (FK users), `name`, `category`, `target_price`, `last_alert_at`, `last_alert_price`, `created_at`.
+- **listings**: `id`, `product_id` (FK products, NULLABLE), `store`, `url`, `canonical_key`, `css_selector`, `active`, `created_at`. Índice em `canonical_key`.
+- **prices**: `id`, `listing_id` (FK listings), `price`, `available`, `coupon_code`, `final_price`, `checked_at`. Índice em `(listing_id, checked_at)`.
+- **app_settings**: `key` (PK), `value`, `updated_at`.
+
+---
+
+## 6. Executando os Testes
 ```bash
-# Ambiente virtual
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt -r requirements-dev.txt
-
-# Rodar os 44 testes unitários
-pytest -v
-
-# Rodar servidor de desenvolvimento
-uvicorn app.main:app --reload --port 8000
+# Executa todos os 99 testes com cobertura completa
+.venv/bin/pytest -v
 ```

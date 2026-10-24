@@ -11,9 +11,10 @@ import threading
 import time
 from urllib.parse import urlparse
 
+from .ai import heal_expired_listing
 from .db import ensure_db_initialized, get_conn
 from .notifier import notify_price_drop, should_notify
-from .scrapers import scrape
+from .scrapers import PriceResult, canonicalize_url, scrape
 
 log = logging.getLogger("collector")
 
@@ -84,6 +85,58 @@ def _domain_delay(domain: str, default_delay: tuple[float, float]) -> float:
     return random.uniform(*default_delay)
 
 
+def _should_auto_heal(result: PriceResult | None, exc: Exception | None) -> bool:
+    """Determina se o link deve acionar Self-Healing com IA.
+
+    Cirúrgico e imune a falsos positivos causados por bloqueios temporários (CAPTCHA/WAF),
+    timeouts de rede ou falta de credenciais/chaves de API.
+    """
+    if exc is not None:
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+        if status_code is None:
+            status_code = getattr(exc, "status_code", None)
+        return status_code in (404, 410)
+
+    if result is None:
+        return False
+
+    src = (result.source or "").strip().lower()
+
+    # Bloqueios temporários, erro de configuração ou limitação técnica
+    blocked_sources = {
+        "amazon:captcha",
+        "amazon:price-hidden",
+        "shopee:no-credentials",
+        "shopee:invalid-url",
+        "shopee:http-429",
+        "ml:no-token",
+        "ml:sem-token",
+        "ml:id-invalido",
+        "ml:http-401",
+        "ml:http-403",
+        "ml:http-429",
+        "ml:blocked",
+        "aliexpress:csr-js-required",
+    }
+    if src in blocked_sources:
+        return False
+
+    transient_prefixes = (
+        "shopee:exception-",
+        "shopee:http-5",
+        "ml:http-5",
+        "ml:exception-",
+    )
+    if any(src.startswith(prefix) for prefix in transient_prefixes):
+        return False
+
+    # Sinais reais de link expirado ou sem estoque
+    if result.available is False or result.price is None:
+        return True
+
+    return False
+
+
 def _collect_all(delay: tuple[float, float]) -> dict:
     COLLECTOR_STATE["running"] = True
     COLLECTOR_STATE["current"] = 0
@@ -96,8 +149,12 @@ def _collect_all(delay: tuple[float, float]) -> dict:
         rows = [
             dict(r)
             for r in conn.execute(
-                """SELECT l.*, p.name AS product_name, p.target_price, p.last_alert_at, p.last_alert_price
-                   FROM listings l JOIN products p ON p.id = l.product_id
+                """SELECT l.*, p.name AS product_name, p.category AS product_category, p.target_price,
+                          p.last_alert_at, p.last_alert_price,
+                          u.telegram_chat_id AS user_chat_id
+                   FROM listings l
+                   JOIN products p ON p.id = l.product_id
+                   LEFT JOIN users u ON u.id = p.user_id
                    WHERE l.active = 1"""
             ).fetchall()
         ]
@@ -107,6 +164,26 @@ def _collect_all(delay: tuple[float, float]) -> dict:
     COLLECTOR_STATE["total"] = len(rows)
     _notify_listeners({"event": "start", "total": len(rows), "current": 0})
     stats = {"ok": 0, "failed": 0}
+
+    # Prepara canonical_key e determina a melhor URL para scraping por (canonical_key, css_selector)
+    best_url_by_cache_key: dict[tuple[str, str], str] = {}
+    for r in rows:
+        ckey = (r.get("canonical_key") or "").strip()
+        if not ckey:
+            ckey = canonicalize_url(r["url"])
+            r["canonical_key"] = ckey
+        css = (r.get("css_selector") or "").strip()
+        k = (ckey, css)
+        url = r["url"]
+        if k not in best_url_by_cache_key:
+            best_url_by_cache_key[k] = url
+        else:
+            current_url = best_url_by_cache_key[k]
+            if "pdp_npi=" in url and "pdp_npi=" not in current_url:
+                best_url_by_cache_key[k] = url
+
+    scraped_cache: dict[tuple[str, str], tuple[PriceResult | None, Exception | None, str]] = {}
+
     # Rastreia alertas já disparados nesta mesma execução para evitar duplicados
     alerted_in_run: dict[int, tuple[str, float]] = {}
     # Rate-limiting por domínio: evita esperar entre lojas diferentes
@@ -114,17 +191,68 @@ def _collect_all(delay: tuple[float, float]) -> dict:
     try:
         for i, row in enumerate(rows):
             COLLECTOR_STATE["current"] = i + 1
-            domain = (urlparse(row["url"]).hostname or row["store"] or "").lower()
-            prev_ts = last_request_by_domain.get(domain)
-            if prev_ts is not None:
-                wait_needed = _domain_delay(domain, delay) - (time.monotonic() - prev_ts)
-                if wait_needed > 0:
-                    time.sleep(wait_needed)
-            last_request_by_domain[domain] = time.monotonic()
+            ckey = row["canonical_key"]
+            css = (row.get("css_selector") or "").strip()
+            cache_key = (ckey, css)
 
-            try:
-                result = scrape(row["url"], row["css_selector"])
-            except Exception as exc:  # rede, bloqueio, timeout...
+            if cache_key not in scraped_cache:
+                domain = (urlparse(row["url"]).hostname or row["store"] or "").lower()
+                prev_ts = last_request_by_domain.get(domain)
+                if prev_ts is not None:
+                    wait_needed = _domain_delay(domain, delay) - (time.monotonic() - prev_ts)
+                    if wait_needed > 0:
+                        time.sleep(wait_needed)
+                last_request_by_domain[domain] = time.monotonic()
+
+                url_to_scrape = best_url_by_cache_key[cache_key]
+                result: PriceResult | None = None
+                exc: Exception | None = None
+                checked_at_utc = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+                try:
+                    result = scrape(url_to_scrape, row["css_selector"])
+                except Exception as e:
+                    exc = e
+                scraped_cache[cache_key] = (result, exc, checked_at_utc)
+            else:
+                result, exc, checked_at_utc = scraped_cache[cache_key]
+
+            # Auto-recuperação (Self-Healing): substitui anúncios expirados/esgotados/fora do ar
+            needs_healing = _should_auto_heal(result, exc)
+            if needs_healing:
+                try:
+                    new_url, healed_res, _ = heal_expired_listing(
+                        product_name=row["product_name"],
+                        store=row["store"],
+                        dead_url=row["url"],
+                        category=row.get("product_category") or "Notebook",
+                        css_selector=row.get("css_selector"),
+                    )
+                    if new_url and healed_res and healed_res.price is not None:
+                        new_ckey = canonicalize_url(new_url)
+                        w_conn = get_conn()
+                        try:
+                            with w_conn:
+                                w_conn.execute(
+                                    "UPDATE listings SET url = ?, canonical_key = ? WHERE id = ?",
+                                    (new_url, new_ckey, row["id"]),
+                                )
+                        finally:
+                            w_conn.close()
+
+                        row["url"] = new_url
+                        row["canonical_key"] = new_ckey
+                        result = healed_res
+                        exc = None
+                        log.info(
+                            "✨ [Auto-Heal] Link expirado substituído na %s para '%s': %s",
+                            row["store"],
+                            row["product_name"],
+                            new_url,
+                        )
+                except Exception as heal_err:
+                    log.warning("Falha ao tentar auto-heal para %s: %s", row["url"], heal_err)
+
+            if exc is not None:
                 log.warning("[%s] erro em %s: %s", row["store"], row["url"], exc)
                 stats["failed"] += 1
                 COLLECTOR_STATE["stats"] = stats
@@ -134,8 +262,9 @@ def _collect_all(delay: tuple[float, float]) -> dict:
                 })
                 continue
 
-            if result.price is None:
-                log.warning("[%s] preço não encontrado (%s) em %s", row["store"], result.source, row["url"])
+            if result is None or result.price is None:
+                source = result.source if result else "unknown"
+                log.warning("[%s] preço não encontrado (%s) em %s", row["store"], source, row["url"])
                 stats["failed"] += 1
                 COLLECTOR_STATE["stats"] = stats
                 _notify_listeners({
@@ -149,9 +278,9 @@ def _collect_all(delay: tuple[float, float]) -> dict:
             try:
                 with w_conn:
                     w_conn.execute(
-                        """INSERT INTO prices (listing_id, price, available, coupon_code, final_price)
-                           VALUES (?, ?, ?, ?, ?)""",
-                        (row["id"], result.price, int(result.available), result.coupon_code, effective_price),
+                        """INSERT INTO prices (listing_id, price, available, coupon_code, final_price, checked_at)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (row["id"], result.price, int(result.available), result.coupon_code, effective_price, checked_at_utc),
                     )
                 stats["ok"] += 1
                 COLLECTOR_STATE["stats"] = stats
@@ -188,6 +317,7 @@ def _collect_all(delay: tuple[float, float]) -> dict:
                                 current_price=effective_price,
                                 target_price=target,
                                 coupon_code=result.coupon_code,
+                                telegram_chat_id=(row.get("user_chat_id") or None),
                                 analysis=analysis,
                             )
                             now_utc = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
@@ -209,3 +339,99 @@ def _collect_all(delay: tuple[float, float]) -> dict:
         })
 
     return stats
+
+
+def collect_single_listing(listing_id: int) -> bool:
+    """Coleta imediatamente o preço de um único link (ex.: após quick-add ou cadastro) em background."""
+    ensure_db_initialized()
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """SELECT l.*, p.name AS product_name, p.target_price, p.last_alert_at, p.last_alert_price,
+                      u.telegram_chat_id AS user_chat_id
+               FROM listings l
+               JOIN products p ON p.id = l.product_id
+               LEFT JOIN users u ON u.id = p.user_id
+               WHERE l.id = ? AND l.active = 1""",
+            (listing_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        return False
+
+    row = dict(row)
+    url = row["url"]
+    css = row.get("css_selector")
+    result: PriceResult | None = None
+    try:
+        result = scrape(url, css)
+    except Exception as e:
+        log.warning("[%s] erro em %s: %s", row.get("store"), url, e)
+        return False
+
+    if result is None or result.price is None:
+        source = result.source if result else "unknown"
+        log.warning("[%s] preço não encontrado (%s) em %s", row.get("store"), source, url)
+        return False
+
+    effective_price = result.final_price or result.price
+    checked_at_utc = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+
+    w_conn = get_conn()
+    try:
+        with w_conn:
+            w_conn.execute(
+                """INSERT INTO prices (listing_id, price, available, coupon_code, final_price, checked_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (row["id"], result.price, int(result.available), result.coupon_code, effective_price, checked_at_utc),
+            )
+
+            ckey = (row.get("canonical_key") or "").strip() or canonicalize_url(url)
+            if ckey:
+                siblings = w_conn.execute(
+                    "SELECT id FROM listings WHERE canonical_key = ? AND id != ? AND active = 1",
+                    (ckey, row["id"]),
+                ).fetchall()
+                for s in siblings:
+                    w_conn.execute(
+                        """INSERT INTO prices (listing_id, price, available, coupon_code, final_price, checked_at)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (s["id"], result.price, int(result.available), result.coupon_code, effective_price, checked_at_utc),
+                    )
+
+        target = row.get("target_price")
+        if target and result.available and effective_price <= target:
+            if should_notify(target, effective_price, row.get("last_alert_at"), row.get("last_alert_price")):
+                try:
+                    from .analyzer import get_product_analysis
+                    analysis = get_product_analysis(row["product_id"], current_price=effective_price, conn=w_conn)
+                    notify_price_drop(
+                        product_name=row["product_name"],
+                        store=row["store"],
+                        url=row["url"],
+                        current_price=effective_price,
+                        target_price=target,
+                        coupon_code=result.coupon_code,
+                        telegram_chat_id=(row.get("user_chat_id") or None),
+                        analysis=analysis,
+                    )
+                    now_utc = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+                    with w_conn:
+                        w_conn.execute(
+                            "UPDATE products SET last_alert_at = ?, last_alert_price = ? WHERE id = ?",
+                            (now_utc, effective_price, row["product_id"]),
+                        )
+                except Exception as err:
+                    log.error("Erro ao processar notificação de alerta para o produto %s: %s", row["product_id"], err)
+    finally:
+        w_conn.close()
+
+    _notify_listeners({
+        "event": "done",
+        "total": 1,
+        "stats": {"ok": 1, "failed": 0},
+        "last_run": checked_at_utc,
+    })
+    return True

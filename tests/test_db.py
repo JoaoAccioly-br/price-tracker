@@ -16,6 +16,7 @@ def test_db_settings_and_transactions(tmp_path, monkeypatch):
             conn.execute("DELETE FROM prices")
             conn.execute("DELETE FROM listings")
             conn.execute("DELETE FROM products")
+            conn.execute("DELETE FROM users")
             conn.execute("DELETE FROM app_settings")
         conn.close()
 

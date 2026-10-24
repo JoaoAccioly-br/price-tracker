@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Price Tracker — Adicionar Produto",
+  "version": "1.0.0",
+  "description": "Adicione produtos e links de lojas diretamente ao seu Price Tracker em 1 clique.",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Adicionar ao Price Tracker",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

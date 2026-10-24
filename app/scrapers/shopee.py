@@ -143,6 +143,60 @@ def fetch_from_api(url: str, app_id: str, secret: str, timeout: float = 15.0) ->
         return PriceResult(price=None, available=False, name=None, source=f"shopee:exception-{type(exc).__name__}")
 
 
+def search_shopee_offers(keyword: str, limit: int = 5) -> list[dict]:
+    """Busca ofertas ativas na Shopee por palavra-chave usando a API Oficial de Afiliados."""
+    app_id, secret = get_shopee_credentials()
+    if not app_id or not secret or not keyword or not keyword.strip():
+        return []
+
+    safe_kw = keyword.replace("\\", "").replace('"', " ").strip()
+    query_str = (
+        f'query {{ productOfferV2(keyword: "{safe_kw}", sortType: 1, limit: {int(limit)}) {{ '
+        f'nodes {{ itemId productName productLink priceMin priceMax price }} }} }}'
+    )
+    payload = {"query": query_str}
+    timestamp, signature = generate_shopee_signature(app_id, secret, payload)
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"SHA256 Credential={app_id},Timestamp={timestamp},Signature={signature}",
+    }
+
+    try:
+        if getattr(httpx.post, "__module__", "") != "httpx":
+            resp = httpx.post(SHOPEE_API_URL, json=payload, headers=headers, timeout=15.0)
+        else:
+            client = _get_shopee_client(timeout=15.0)
+            resp = client.post(SHOPEE_API_URL, json=payload, headers=headers, timeout=15.0)
+
+        if resp.status_code != 200:
+            return []
+
+        data = resp.json()
+        if data.get("errors"):
+            return []
+
+        nodes = data.get("data", {}).get("productOfferV2", {}).get("nodes", [])
+        results = []
+        for node in nodes:
+            url = (node.get("productLink") or "").strip()
+            title = (node.get("productName") or "").strip()
+            if not url.startswith("http") or not title:
+                continue
+            raw_price = node.get("price") or node.get("priceMin") or node.get("priceMax")
+            price = parse_brl(raw_price)
+            results.append({
+                "store": "Shopee",
+                "title": title,
+                "url": url,
+                "price": price,
+                "source": "shopee:api",
+            })
+        return results
+    except Exception as exc:
+        log.warning("Erro ao buscar ofertas na Shopee para '%s': %s", keyword, exc)
+        return []
+
+
 def scrape_shopee(url: str, css_selector: str | None = None) -> PriceResult:
     """Ponto de entrada para links da Shopee.
 

@@ -15,11 +15,11 @@
     <form id="f-product" onsubmit="handleCreateProduct(event)">
       <div class="form-group">
         <label>Nome do Produto / Modelo</label>
-        <input name="name" placeholder="Ex.: Lenovo IdeaPad 3, Monitor Dell 27..." required>
+        <input name="name" id="new-prod-name" placeholder="Ex.: Lenovo IdeaPad 3, Monitor Dell 27..." required>
       </div>
       <div class="form-group">
         <label>Tipo / Categoria do Produto</label>
-        <select name="category" required>
+        <select name="category" id="new-prod-category" required>
           <option value="Notebook" selected>Notebook</option>
           <option value="Monitor">Monitor</option>
           <option value="Periférico">Periférico</option>
@@ -30,12 +30,16 @@
       </div>
       <div class="form-group">
         <label>Preço Alvo Desejado (R$)</label>
-        <input name="target_price" type="number" step="0.01" placeholder="Ex.: 3100.00">
+        <input name="target_price" id="new-prod-target" type="number" step="0.01" placeholder="Ex.: 3100.00">
       </div>
-      <div style="margin-top: 24px">
-        <button type="submit" class="btn-primary" style="width: 100%; justify-content: center">
+      <div class="form-card-actions">
+        <button type="submit" class="btn-primary" style="flex: 1; justify-content: center">
           <i class="fa-solid fa-plus"></i>
           <span>Cadastrar Produto</span>
+        </button>
+        <button type="button" class="btn-outline" onclick="handleCreateProductWithAI(event)" style="flex: 1; justify-content: center; border-color: var(--accent-red); color: var(--accent-red); font-weight: 700;">
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
+          <span>Cadastrar e Buscar com IA</span>
         </button>
       </div>
     </form>
@@ -72,12 +76,71 @@
         <label>Seletor CSS (Opcional - Plano B)</label>
         <input name="css_selector" placeholder="Ex.: span.preco, .finalPrice">
       </div>
-      <div style="margin-top: 24px">
+      <div class="form-card-actions">
         <button type="submit" class="btn-primary" style="width: 100%; justify-content: center">
           <i class="fa-solid fa-plus"></i>
           <span>Adicionar Link ao Rastreador</span>
         </button>
       </div>
     </form>
+  </div>
+
+  <!-- CARD 3: BUSCADOR INTELIGENTE DE LINKS COM IA (LARGURA TOTAL) -->
+  <div class="form-card ai-discover-card" id="card-ai-discover" style="grid-column: 1 / -1;">
+    <div class="form-card-header">
+      <div class="form-card-icon" style="background: linear-gradient(135deg, var(--accent-red), #d64567); color: #fff;">
+        <i class="fa-solid fa-wand-magic-sparkles"></i>
+      </div>
+      <div class="form-card-title">
+        <div style="display:flex; align-items:center; gap:8px">
+          <h3>Buscador Inteligente de Links com IA</h3>
+          <span class="ai-badge-header">Gemini AI</span>
+        </div>
+        <p>A IA analisa lojas brasileiras (Shopee, Mercado Livre, Amazon, KaBuM!) e descobre anúncios do produto para monitorar.</p>
+      </div>
+    </div>
+
+    <form id="f-ai-discover" onsubmit="handleAIDiscoverSubmit(event)">
+      <div class="ai-filter-bar">
+        <div class="form-group" style="margin-bottom:0;">
+          <label for="ai-cadastro-product-select">Produto Cadastrado</label>
+          <select id="ai-cadastro-product-select" onchange="handleAICadastroProductChange()">
+            <option value="">-- Escolha um produto ou digite ao lado --</option>
+          </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom:0;">
+          <label for="ai-cadastro-query-input">Termo / Modelo de Busca</label>
+          <input type="text" id="ai-cadastro-query-input" placeholder="Ex.: Lenovo IdeaPad Slim 3 Ryzen 7">
+        </div>
+
+        <div class="form-group" style="margin-bottom:0;">
+          <label for="ai-cadastro-store-select">Loja Específica</label>
+          <select id="ai-cadastro-store-select">
+            <option value="">Todas as lojas</option>
+            <option value="Shopee">Shopee</option>
+            <option value="Mercado Livre">Mercado Livre</option>
+            <option value="Amazon">Amazon</option>
+            <option value="KaBuM!">KaBuM!</option>
+            <option value="Magalu">Magalu</option>
+          </select>
+        </div>
+
+        <div style="align-self: flex-end;">
+          <button type="submit" class="btn-primary" id="btn-ai-discover-submit" style="background: linear-gradient(135deg, var(--accent-red), #d64567); padding: 10px 18px; white-space: nowrap;">
+            <i class="fa-solid fa-wand-magic-sparkles"></i>
+            <span>Buscar Links com IA</span>
+          </button>
+        </div>
+      </div>
+    </form>
+
+    <!-- CONTAINER DE RESULTADOS IA -->
+    <div id="ai-cadastro-results-container" style="margin-top: 20px;">
+      <div style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px;">
+        <i class="fa-solid fa-wand-magic-sparkles" style="font-size: 22px; margin-bottom: 8px; display: block; opacity: 0.5;"></i>
+        Escolha um produto acima ou digite o modelo para que o Gemini busque links nas lojas automaticamente.
+      </div>
+    </div>
   </div>
 </div>

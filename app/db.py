@@ -33,8 +33,18 @@ _INIT_LOCK = threading.Lock()
 
 # Schema para SQLite
 SQLITE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL,
+    email        TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    telegram_chat_id TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS products (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER REFERENCES users(id) ON DELETE CASCADE,
     name         TEXT NOT NULL,
     category     TEXT NOT NULL DEFAULT 'Notebook',
     target_price REAL,
@@ -50,6 +60,7 @@ CREATE TABLE IF NOT EXISTS listings (
     css_selector TEXT,
     use_browser  INTEGER NOT NULL DEFAULT 0,
     active       INTEGER NOT NULL DEFAULT 1,
+    canonical_key TEXT,
     UNIQUE (product_id, url)
 );
 
@@ -64,6 +75,7 @@ CREATE TABLE IF NOT EXISTS prices (
 );
 CREATE INDEX IF NOT EXISTS idx_prices_listing_time ON prices (listing_id, checked_at);
 CREATE INDEX IF NOT EXISTS idx_listings_product ON listings (product_id, active);
+CREATE INDEX IF NOT EXISTS idx_listings_canonical ON listings (canonical_key);
 
 CREATE TABLE IF NOT EXISTS app_settings (
     key         TEXT PRIMARY KEY,
@@ -74,8 +86,18 @@ CREATE TABLE IF NOT EXISTS app_settings (
 
 # Schema para PostgreSQL (compatível com Neon)
 POSTGRES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id           BIGSERIAL PRIMARY KEY,
+    name         TEXT NOT NULL,
+    email        TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    telegram_chat_id TEXT,
+    created_at   TEXT NOT NULL DEFAULT (TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
+);
+
 CREATE TABLE IF NOT EXISTS products (
     id           BIGSERIAL PRIMARY KEY,
+    user_id      BIGINT REFERENCES users(id) ON DELETE CASCADE,
     name         TEXT NOT NULL,
     category     TEXT NOT NULL DEFAULT 'Notebook',
     target_price DOUBLE PRECISION,
@@ -91,6 +113,7 @@ CREATE TABLE IF NOT EXISTS listings (
     css_selector TEXT,
     use_browser  INTEGER NOT NULL DEFAULT 0,
     active       INTEGER NOT NULL DEFAULT 1,
+    canonical_key TEXT,
     UNIQUE (product_id, url)
 );
 
@@ -105,6 +128,7 @@ CREATE TABLE IF NOT EXISTS prices (
 );
 CREATE INDEX IF NOT EXISTS idx_prices_listing_time ON prices (listing_id, checked_at);
 CREATE INDEX IF NOT EXISTS idx_listings_product ON listings (product_id, active);
+CREATE INDEX IF NOT EXISTS idx_listings_canonical ON listings (canonical_key);
 
 CREATE TABLE IF NOT EXISTS app_settings (
     key         TEXT PRIMARY KEY,
@@ -308,8 +332,18 @@ def init_db() -> None:
             with conn:
                 with conn._raw.cursor() as cur:
                     cur.execute(POSTGRES_SCHEMA)
+                    cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id) ON DELETE CASCADE")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_products_user ON products (user_id)")
                     cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS last_alert_at TEXT")
                     cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS last_alert_price DOUBLE PRECISION")
+                    cur.execute("ALTER TABLE listings ADD COLUMN IF NOT EXISTS canonical_key TEXT")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_listings_canonical ON listings (canonical_key)")
+
+                from .scrapers.base import canonicalize_url
+                rows = conn.execute("SELECT id, url FROM listings WHERE canonical_key IS NULL OR canonical_key = ''").fetchall()
+                for row in rows:
+                    ckey = canonicalize_url(row["url"])
+                    conn.execute("UPDATE listings SET canonical_key = ? WHERE id = ?", (ckey, row["id"]))
         finally:
             conn.close()
         with _INIT_LOCK:
@@ -320,8 +354,17 @@ def init_db() -> None:
     conn = get_conn()
     try:
         with conn:
+            tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            if "listings" in tables:
+                listing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(listings)").fetchall()}
+                if "canonical_key" not in listing_cols:
+                    conn.execute("ALTER TABLE listings ADD COLUMN canonical_key TEXT")
+
             conn.executescript(SQLITE_SCHEMA)
             prod_cols = {row["name"] for row in conn.execute("PRAGMA table_info(products)").fetchall()}
+            if "user_id" not in prod_cols:
+                conn.execute("ALTER TABLE products ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_products_user ON products (user_id)")
             if "category" not in prod_cols:
                 conn.execute("ALTER TABLE products ADD COLUMN category TEXT NOT NULL DEFAULT 'Notebook'")
             if "last_alert_at" not in prod_cols:
@@ -329,11 +372,22 @@ def init_db() -> None:
             if "last_alert_price" not in prod_cols:
                 conn.execute("ALTER TABLE products ADD COLUMN last_alert_price REAL")
 
+            listing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(listings)").fetchall()}
+            if "canonical_key" not in listing_cols:
+                conn.execute("ALTER TABLE listings ADD COLUMN canonical_key TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_listings_canonical ON listings (canonical_key)")
+
             price_cols = {row["name"] for row in conn.execute("PRAGMA table_info(prices)").fetchall()}
             if "coupon_code" not in price_cols:
                 conn.execute("ALTER TABLE prices ADD COLUMN coupon_code TEXT")
             if "final_price" not in price_cols:
                 conn.execute("ALTER TABLE prices ADD COLUMN final_price REAL")
+
+            from .scrapers.base import canonicalize_url
+            rows = conn.execute("SELECT id, url FROM listings WHERE canonical_key IS NULL OR canonical_key = ''").fetchall()
+            for row in rows:
+                ckey = canonicalize_url(row["url"])
+                conn.execute("UPDATE listings SET canonical_key = ? WHERE id = ?", (ckey, row["id"]))
     finally:
         conn.close()
     with _INIT_LOCK:
