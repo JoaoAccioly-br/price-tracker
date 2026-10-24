@@ -5,6 +5,7 @@
 
 !app/
 !static/
+!extension/
 !requirements.txt
 
 # Mesmo dentro das pastas liberadas, nada de caches/bytecode

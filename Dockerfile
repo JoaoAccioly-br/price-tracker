@@ -38,6 +38,7 @@ WORKDIR /app
 
 COPY app/ ./app/
 COPY static/ ./static/
+COPY extension/ ./extension/
 
 RUN mkdir -p /app/data && chown app:app /app/data
 VOLUME ["/app/data"]
