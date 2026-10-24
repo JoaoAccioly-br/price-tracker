@@ -73,3 +73,82 @@ def test_postgres_prepare_sql_preserves_question_marks_in_literals():
     sql_ins, needs_ret_ins = wrapper._prepare_sql("INSERT INTO products (name) VALUES ('app_settings')")
     assert needs_ret_ins is True
     assert sql_ins.endswith("RETURNING id")
+
+
+def test_postgres_init_db_migration_when_listings_table_already_exists(monkeypatch):
+    """Garante que POSTGRES_SCHEMA não cria índice em canonical_key antes do ALTER TABLE,
+    e que init_db() em PostgreSQL migra tabelas legadas sem erro UndefinedColumn.
+    """
+    # 1. Verifica que os schemas não criam índice em canonical_key prematuramente
+    assert "idx_listings_canonical" not in db.POSTGRES_SCHEMA
+    assert "idx_listings_canonical" not in db.SQLITE_SCHEMA
+
+    # 2. Simula banco PostgreSQL existente onde 'listings' já existia sem 'canonical_key'
+    monkeypatch.setenv("DATABASE_URL", "postgresql://mock_user:mock_pass@neon.tech/mock_db")
+
+    executed_statements: list[str] = []
+    state = {
+        "canonical_key_column_added": False,
+        "closed": False,
+    }
+
+    class MockCursor:
+        def execute(self, sql: str, params=None):
+            executed_statements.append(sql)
+            # Se tentar criar índice em canonical_key antes do ALTER TABLE correspondente, falha como o Postgres real
+            if "idx_listings_canonical" in sql or "(canonical_key)" in sql:
+                if not state["canonical_key_column_added"]:
+                    raise Exception('UndefinedColumn: column "canonical_key" does not exist')
+            if "ALTER TABLE listings ADD COLUMN" in sql and "canonical_key" in sql:
+                state["canonical_key_column_added"] = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    class MockQueryResult:
+        def fetchall(self):
+            return [{"id": 1, "url": "https://www.mercadolivre.com.br/item-p/MLB123"}]
+
+    class MockRawConn:
+        def cursor(self):
+            return MockCursor()
+
+    class MockConn:
+        def __init__(self):
+            self._raw = MockRawConn()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+        def execute(self, sql: str, params=None):
+            executed_statements.append(sql)
+            if "SELECT id, url FROM listings" in sql:
+                if not state["canonical_key_column_added"]:
+                    raise Exception('UndefinedColumn: column "canonical_key" does not exist')
+                return MockQueryResult()
+            return None
+
+        def close(self):
+            state["closed"] = True
+
+    mock_conn = MockConn()
+    monkeypatch.setattr(db, "get_conn", lambda: mock_conn)
+
+    # Executa init_db no fluxo PostgreSQL
+    db.init_db()
+
+    assert state["canonical_key_column_added"] is True
+    assert state["closed"] is True
+    # Garante a ordem: POSTGRES_SCHEMA -> ALTER TABLE canonical_key -> CREATE INDEX idx_listings_canonical
+    schema_idx = executed_statements.index(db.POSTGRES_SCHEMA)
+    alter_idx = next(i for i, s in enumerate(executed_statements) if "ALTER TABLE listings ADD COLUMN" in s and "canonical_key" in s)
+    index_idx = next(i for i, s in enumerate(executed_statements) if "CREATE INDEX IF NOT EXISTS idx_listings_canonical" in s)
+
+    assert schema_idx < alter_idx < index_idx
+

@@ -75,7 +75,6 @@ CREATE TABLE IF NOT EXISTS prices (
 );
 CREATE INDEX IF NOT EXISTS idx_prices_listing_time ON prices (listing_id, checked_at);
 CREATE INDEX IF NOT EXISTS idx_listings_product ON listings (product_id, active);
-CREATE INDEX IF NOT EXISTS idx_listings_canonical ON listings (canonical_key);
 
 CREATE TABLE IF NOT EXISTS app_settings (
     key         TEXT PRIMARY KEY,
@@ -128,7 +127,6 @@ CREATE TABLE IF NOT EXISTS prices (
 );
 CREATE INDEX IF NOT EXISTS idx_prices_listing_time ON prices (listing_id, checked_at);
 CREATE INDEX IF NOT EXISTS idx_listings_product ON listings (product_id, active);
-CREATE INDEX IF NOT EXISTS idx_listings_canonical ON listings (canonical_key);
 
 CREATE TABLE IF NOT EXISTS app_settings (
     key         TEXT PRIMARY KEY,
