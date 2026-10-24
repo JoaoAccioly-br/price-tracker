@@ -160,4 +160,156 @@ def test_scrape_mercadolivre_never_calls_fetch_html(mock_fetch_html, mock_scrape
     mock_fetch_html.assert_not_called()
 
 
+def test_fetch_from_api_catalog_product_buybox_null_fallback_search():
+    """Testa catálogo /p/MLB... quando buy_box_winner é null e obtém preço via fallback /sites/MLB/search."""
+    url = "https://www.mercadolivre.com.br/p/MLB61776379"
+
+    def mock_get(req_url, **kwargs):
+        resp = MagicMock()
+        params = kwargs.get("params") or {}
+        if "/products/MLB61776379" in req_url and "search" not in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "id": "MLB61776379",
+                "name": "Processador AMD Ryzen 7 5700X",
+                "buy_box_winner": None,
+                "price": None,
+            }
+            return resp
+        elif "/sites/MLB/search" in req_url and params.get("product_id") == "MLB61776379":
+            resp.status_code = 200
+            resp.json.return_value = {
+                "results": [
+                    {"id": "MLB123", "title": "Ryzen 7 5700X Oferta 1", "price": 1150.00},
+                    {"id": "MLB456", "title": "Ryzen 7 5700X Oferta 2", "price": 1099.90},
+                ]
+            }
+            return resp
+        resp.status_code = 404
+        return resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        res = mercadolivre.fetch_from_api(url, token="dummy_token")
+        assert res.price == 1099.90
+        assert res.available is True
+        assert res.source == "ml:api-oficial"
+        assert "Ryzen 7 5700X" in (res.name or "")
+
+
+def test_fetch_from_api_catalog_product_buybox_null_fallback_html():
+    """Testa catálogo /p/MLB... quando API não tem ofertas ativas mas HTML público tem preço."""
+    url = "https://www.mercadolivre.com.br/p/MLB61776379"
+
+    html_content = """
+    <html>
+      <head><title>Processador AMD Ryzen 7</title></head>
+      <body>
+        <h1 class="ui-pdp-title">Processador AMD Ryzen 7 5700X</h1>
+        <div class="ui-pdp-price__second-line">
+          <span class="andes-money-amount__fraction">1.250</span>
+          <span class="andes-money-amount__cents">50</span>
+        </div>
+      </body>
+    </html>
+    """
+
+    def mock_get(req_url, **kwargs):
+        resp = MagicMock()
+        if "/products/MLB61776379" in req_url and "search" not in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "id": "MLB61776379",
+                "name": "Processador AMD Ryzen 7 5700X",
+                "buy_box_winner": None,
+                "price": None,
+            }
+            return resp
+        elif req_url == "https://www.mercadolivre.com.br/p/MLB61776379":
+            resp.status_code = 200
+            resp.text = html_content
+            return resp
+        resp.status_code = 404
+        return resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        res = mercadolivre.fetch_from_api(url, token="dummy_token")
+        assert res.price == 1250.50
+        assert res.available is True
+        assert res.source == "ml:ui-pdp-price"
+        assert "Processador AMD Ryzen 7 5700X" in (res.name or "")
+
+
+def test_fetch_from_api_catalog_product_no_offers_returns_sem_oferta_ativa():
+    """Testa que produto de catálogo 200 OK sem nenhuma oferta retorna ml:sem-oferta-ativa em vez de ml:api-404."""
+    url = "https://www.mercadolivre.com.br/p/MLB61776379"
+
+    def mock_get(req_url, **kwargs):
+        resp = MagicMock()
+        if "/products/MLB61776379" in req_url and "search" not in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "id": "MLB61776379",
+                "name": "Processador Esgotado",
+                "buy_box_winner": None,
+                "price": None,
+            }
+            return resp
+        resp.status_code = 404
+        resp.text = "Not found"
+        return resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        res = mercadolivre.fetch_from_api(url, token="dummy_token")
+        assert res.price is None
+        assert res.available is False
+        assert res.source == "ml:sem-oferta-ativa"
+
+
+def test_search_mercadolivre_offers_catalog_and_fallback():
+    """Testa busca no ML anexando item_id a permalinks e buscando em /sites/MLB/search quando sem preço."""
+    def mock_get(req_url, **kwargs):
+        resp = MagicMock()
+        if "/products/search" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "results": [
+                    {
+                        "id": "MLB61776379",
+                        "name": "Catálogo Sem Preço",
+                        "permalink": "https://www.mercadolivre.com.br/p/MLB61776379",
+                        "buy_box_winner": {"item_id": "MLB99887766", "price": None},
+                    }
+                ]
+            }
+            return resp
+        elif "/sites/MLB/search" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "results": [
+                    {
+                        "id": "MLB554433",
+                        "title": "Anúncio Geral Ativo",
+                        "permalink": "https://produto.mercadolivre.com.br/MLB-554433",
+                        "price": 899.00,
+                    }
+                ]
+            }
+            return resp
+        resp.status_code = 404
+        return resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        results = mercadolivre.search_mercadolivre_offers("Ryzen 7", limit=3)
+        assert len(results) == 2
+
+        # Primeiro item tem preço vindo de /sites/MLB/search
+        assert results[0]["title"] == "Anúncio Geral Ativo"
+        assert results[0]["price"] == 899.00
+
+        # Segundo item é o catálogo sem preço, mas com pdp_filters anexado
+        assert results[1]["title"] == "Catálogo Sem Preço"
+        assert results[1]["price"] is None
+        assert "pdp_filters=item_id:MLB99887766" in results[1]["url"]
+
+
 

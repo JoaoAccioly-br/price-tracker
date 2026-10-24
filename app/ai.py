@@ -54,9 +54,89 @@ def get_gemini_api_key() -> str:
     )
 
 
+_ACTIVE_GEMINI_MODEL: str | None = None
+FALLBACK_GEMINI_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-3-flash-preview",
+    "gemini-2.0-flash",
+    "gemini-flash-latest",
+]
+
+
 def get_gemini_model() -> str:
-    """Retorna o modelo Gemini configurado (padrão: gemini-2.5-flash)."""
-    return os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+    """Retorna o modelo Gemini configurado (padrão: gemini-3.8-flash)."""
+    global _ACTIVE_GEMINI_MODEL
+    if _ACTIVE_GEMINI_MODEL:
+        return _ACTIVE_GEMINI_MODEL
+    return os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip() or "gemini-3.8-flash"
+
+
+def _call_gemini_generate_content(
+    headers: dict,
+    payload: dict,
+    timeout: float = 12.0,
+) -> httpx.Response | None:
+    """Executa POST em generateContent com auto-fallback inteligente caso receba status 404."""
+    global _ACTIVE_GEMINI_MODEL
+
+    initial_model = get_gemini_model().removeprefix("models/").strip()
+    tried_models: set[str] = set()
+
+    def _do_post(model_name: str) -> httpx.Response:
+        clean = model_name.removeprefix("models/").strip()
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean}:generateContent"
+        return _http_post(url, headers=headers, json=payload, timeout=timeout)
+
+    tried_models.add(initial_model)
+    try:
+        resp = _do_post(initial_model)
+    except Exception as exc:
+        log.warning("Erro ao chamar Gemini (%s): %s", initial_model, exc)
+        return None
+
+    if resp.status_code == 200:
+        return resp
+
+    if resp.status_code == 404:
+        log.warning(
+            "Gemini retornou 404 para modelo '%s' (%s). Iniciando auto-fallback...",
+            initial_model,
+            resp.text[:200],
+        )
+        candidates: list[str] = []
+
+        # 1. Sugestão da própria mensagem de erro da API do Google
+        m = re.search(r"use\s+(?:models/)?([a-zA-Z0-9._-]+)", resp.text, re.IGNORECASE)
+        if m:
+            suggested = m.group(1).removeprefix("models/").strip()
+            if suggested and suggested not in tried_models:
+                candidates.append(suggested)
+
+        # 2. Lista de modelos de fallback em ordem
+        for fb in FALLBACK_GEMINI_MODELS:
+            clean_fb = fb.removeprefix("models/").strip()
+            if clean_fb not in tried_models and clean_fb not in candidates:
+                candidates.append(clean_fb)
+
+        for cand in candidates:
+            tried_models.add(cand)
+            try:
+                cand_resp = _do_post(cand)
+                if cand_resp.status_code == 200:
+                    log.info("Auto-fallback do Gemini bem-sucedido: '%s' -> '%s'", initial_model, cand)
+                    _ACTIVE_GEMINI_MODEL = cand
+                    return cand_resp
+                log.warning(
+                    "Fallback Gemini '%s' retornou HTTP %d: %s",
+                    cand,
+                    cand_resp.status_code,
+                    cand_resp.text[:200],
+                )
+            except Exception as exc:
+                log.warning("Erro ao tentar fallback Gemini com '%s': %s", cand, exc)
+
+    return resp
 
 
 def _detect_store_name(url: str) -> str:
@@ -80,9 +160,6 @@ def _gemini_grounded_search(
     if not api_key:
         return []
 
-    model = get_gemini_model()
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-
     store_filter_hint = (
         f"especificamente na loja {target_store}"
         if target_store
@@ -104,9 +181,11 @@ def _gemini_grounded_search(
     seen_urls: set[str] = set()
 
     try:
-        resp = _http_post(api_url, headers=headers, json=payload, timeout=12.0)
-        if resp.status_code != 200:
-            log.warning("Gemini Grounded Search falhou (%d): %s", resp.status_code, resp.text[:200])
+        resp = _call_gemini_generate_content(headers=headers, payload=payload, timeout=12.0)
+        if resp is None or resp.status_code != 200:
+            status = resp.status_code if resp else "sem-resposta"
+            text = resp.text[:200] if resp else ""
+            log.warning("Gemini Grounded Search falhou (%s): %s", status, text)
             return []
 
         data = resp.json()
@@ -179,9 +258,6 @@ def _gemini_filter_and_rank(
     """Utiliza o Gemini para eliminar acessórios e classificar a relevância dos links."""
     api_key = get_gemini_api_key()
     if api_key and candidates:
-        model = get_gemini_model()
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-
         items_desc = []
         for i, c in enumerate(candidates):
             price_str = f" - R$ {c['price']:.2f}" if c.get("price") else ""
@@ -210,8 +286,8 @@ def _gemini_filter_and_rank(
         headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
 
         try:
-            resp = _http_post(api_url, headers=headers, json=payload, timeout=12.0)
-            if resp.status_code == 200:
+            resp = _call_gemini_generate_content(headers=headers, payload=payload, timeout=12.0)
+            if resp is not None and resp.status_code == 200:
                 body = resp.json()
                 cand_first = (body.get("candidates") or [{}])[0]
                 text = (cand_first.get("content", {}).get("parts") or [{}])[0].get("text", "")
@@ -264,6 +340,35 @@ def _gemini_filter_and_rank(
         filtered.append(item)
 
     return filtered
+
+
+def _diversify_by_store(results: list[dict], max_results: int) -> list[dict]:
+    """Intercala os resultados entre diferentes lojas (round-robin) para garantir diversidade.
+
+    Agrupa os itens por loja normalizada mantendo a ordem original de relevância dentro
+    de cada loja. Na 1ª rodada, seleciona o 1º item de cada loja; na 2ª rodada, o 2º item
+    de cada loja, e assim sucessivamente até preencher max_results.
+    """
+    if not results or max_results <= 0:
+        return []
+
+    stores_map: dict[str, list[dict]] = {}
+    for r in results:
+        store_key = (r.get("store") or "Loja").strip().lower()
+        if store_key not in stores_map:
+            stores_map[store_key] = []
+        stores_map[store_key].append(r)
+
+    diversified: list[dict] = []
+    max_items_in_store = max(len(items) for items in stores_map.values())
+    for round_idx in range(max_items_in_store):
+        for items in stores_map.values():
+            if round_idx < len(items):
+                diversified.append(items[round_idx])
+                if len(diversified) >= max_results:
+                    return diversified
+
+    return diversified
 
 
 def discover_product_links(
@@ -323,12 +428,12 @@ def discover_product_links(
         "ai_used": bool(api_key),
         "gemini_configured": bool(api_key),
         "query": product_name,
-        "results": results[:max_results],
+        "results": _diversify_by_store(results, max_results),
     }
 
 
 def heal_expired_listing(
-    product_name: str,
+    product_name: str, 
     store: str,
     dead_url: str,
     category: str = "Notebook",

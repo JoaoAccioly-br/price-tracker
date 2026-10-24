@@ -210,6 +210,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
         "Accept": "application/json",
     }
     last_status: int | None = None
+    catalog_found = False
 
     for cid in candidate_ids:
         is_catalog = "/p/" in url or "/up/" in url or cid.startswith("MLBU")
@@ -297,6 +298,9 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
                     # C) Objeto individual (produto de catálogo ou item direto)
                     if isinstance(data, dict):
                         name = data.get("title") or data.get("name")
+                        catalog_name = data.get("name") or data.get("title")
+                        if "/products/" in api_url:
+                            catalog_found = True
 
                         # 1. Buy box winner do produto de catálogo
                         bb = data.get("buy_box_winner")
@@ -382,6 +386,100 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
                                         name = child_data.get("title") or name
                                         break
 
+                        # Passos 5, 6 e 7 para produtos de catálogo sem preço
+                        if price is None and ("/products/" in api_url or is_catalog):
+                            # Passo 5: Busca de itens ativos do catálogo via /sites/MLB/search?product_id={cid}
+                            if cid:
+                                try:
+                                    s_url = "https://api.mercadolibre.com/sites/MLB/search"
+                                    s_params = {"product_id": cid, "limit": 5}
+                                    s_resp = _http_get(s_url, params=s_params, headers=headers, timeout=10)
+                                    if s_resp.status_code == 200:
+                                        s_data = s_resp.json()
+                                        active_items = []
+                                        for sit in s_data.get("results", []):
+                                            sp = sit.get("price")
+                                            if sp is not None:
+                                                active_items.append((float(sp), sit.get("title")))
+                                        if active_items:
+                                            active_items.sort(key=lambda x: x[0])
+                                            price = active_items[0][0]
+                                            name = active_items[0][1] or name or catalog_name
+                                            available = True
+                                            log.info(
+                                                "[ML-API] Preço R$ %.2f obtido via /sites/MLB/search?product_id=%s",
+                                                price,
+                                                cid,
+                                            )
+                                except Exception as s_exc:
+                                    log.warning("[ML-API] Erro ao buscar por product_id %s: %s", cid, s_exc)
+
+                            # Passo 6: Busca por /products/search ou /sites/MLB/search com catalog_name
+                            if price is None and catalog_name:
+                                try:
+                                    q_url = "https://api.mercadolibre.com/products/search"
+                                    q_params = {
+                                        "status": "active",
+                                        "site_id": "MLB",
+                                        "q": catalog_name.strip(),
+                                        "limit": 5,
+                                    }
+                                    q_resp = _http_get(q_url, params=q_params, headers=headers, timeout=10)
+                                    if q_resp.status_code == 200:
+                                        q_data = q_resp.json()
+                                        for q_item in q_data.get("results", []):
+                                            q_bb = q_item.get("buy_box_winner")
+                                            if isinstance(q_bb, dict) and q_bb.get("price") is not None:
+                                                price = float(q_bb["price"])
+                                                name = q_item.get("name") or name or catalog_name
+                                                available = True
+                                                log.info(
+                                                    "[ML-API] Preço R$ %.2f obtido via /products/search com catalog_name '%s'",
+                                                    price,
+                                                    catalog_name,
+                                                )
+                                                break
+
+                                    if price is None:
+                                        qs_url = "https://api.mercadolibre.com/sites/MLB/search"
+                                        qs_params = {"q": catalog_name.strip(), "limit": 5}
+                                        qs_resp = _http_get(qs_url, params=qs_params, headers=headers, timeout=10)
+                                        if qs_resp.status_code == 200:
+                                            qs_data = qs_resp.json()
+                                            qs_items = []
+                                            for qsit in qs_data.get("results", []):
+                                                qsp = qsit.get("price")
+                                                if qsp is not None:
+                                                    qs_items.append((float(qsp), qsit.get("title")))
+                                            if qs_items:
+                                                qs_items.sort(key=lambda x: x[0])
+                                                price = qs_items[0][0]
+                                                name = qs_items[0][1] or name or catalog_name
+                                                available = True
+                                                log.info(
+                                                    "[ML-API] Preço R$ %.2f obtido via /sites/MLB/search com catalog_name '%s'",
+                                                    price,
+                                                    catalog_name,
+                                                )
+                                except Exception as q_exc:
+                                    log.warning("[ML-API] Erro ao buscar por catalog_name %s: %s", catalog_name, q_exc)
+
+                            # Passo 7: Fallback de HTML público da página de catálogo (/p/MLB... ou /up/MLBU...)
+                            if price is None and ("/p/" in url or "/up/" in url or is_catalog):
+                                try:
+                                    r_html = _http_get(url, headers=ML_HEADERS, timeout=10, follow_redirects=True)
+                                    if r_html.status_code == 200 and getattr(r_html, "text", None):
+                                        html_res = parse(r_html.text)
+                                        if html_res and html_res.price is not None:
+                                            log.info(
+                                                "[ML-API] Preço R$ %.2f obtido via fallback HTML da página de catálogo (%s)",
+                                                html_res.price,
+                                                url,
+                                            )
+                                            return html_res
+                                except Exception as h_exc:
+                                    log.warning("[ML-API] Falha no fallback HTML para catálogo %s: %s", url, h_exc)
+
                     if price is not None:
                         log.info(
                             "[ML-API] Preço R$ %.2f obtido com sucesso via API oficial (%s)",
@@ -391,7 +489,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
                         return PriceResult(
                             price=price,
                             available=available,
-                            name=name,
+                            name=name or catalog_name,
                             source="ml:api-oficial",
                             final_price=price,
                         )
@@ -414,7 +512,11 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
             except Exception as exc:
                 log.warning("[ML-API] Erro ao conectar na API (%s): %s", api_url, exc)
 
-    error_source = f"ml:api-{last_status}" if last_status else "ml:sem-oferta-ativa"
+    error_source = (
+        "ml:sem-oferta-ativa"
+        if catalog_found
+        else (f"ml:api-{last_status}" if last_status else "ml:sem-oferta-ativa")
+    )
     log.warning("[ML-API] Falha ao obter preço para %s. Origem do erro: %s", url, error_source)
     return PriceResult(price=None, available=False, source=error_source)
 
@@ -504,7 +606,9 @@ def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    results: list[dict] = []
+    priced_results: list[dict] = []
+    unpriced_results: list[dict] = []
+
     # 1. Tenta buscar em /products/search (produtos de catálogo com BuyBox)
     try:
         url_products = "https://api.mercadolibre.com/products/search"
@@ -525,43 +629,66 @@ def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
                     continue
                 price = None
                 bb = item.get("buy_box_winner")
-                if bb and bb.get("price") is not None:
+                if isinstance(bb, dict):
+                    winner_item_id = bb.get("item_id") or bb.get("id")
+                    if winner_item_id and "item_id" not in permalink:
+                        sep = "&" if "?" in permalink else "?"
+                        permalink = f"{permalink}{sep}pdp_filters=item_id:{winner_item_id}"
+                    if bb.get("price") is not None:
+                        price = parse_brl(bb.get("price"))
+                elif bb and hasattr(bb, "get") and bb.get("price") is not None:
                     price = parse_brl(bb.get("price"))
-                results.append({
+
+                entry = {
                     "store": "Mercado Livre",
                     "title": name.strip(),
                     "url": permalink.strip(),
                     "price": price,
                     "source": "ml:api",
-                })
+                }
+                if price is not None:
+                    priced_results.append(entry)
+                else:
+                    unpriced_results.append(entry)
     except Exception as exc:
         log.warning("Erro ao buscar em /products/search do Mercado Livre para '%s': %s", keyword, exc)
 
-    if results:
-        return results[:limit]
+    # 2. Se não atingiu o limite com itens precificados, busca em /sites/MLB/search (anúncios gerais)
+    if len(priced_results) < limit:
+        try:
+            url_search = "https://api.mercadolibre.com/sites/MLB/search"
+            params_search = {"q": keyword.strip(), "limit": limit}
+            resp = _http_get(url_search, params=params_search, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                for item in data.get("results", []):
+                    title = item.get("title")
+                    permalink = item.get("permalink")
+                    if not permalink or not title:
+                        continue
+                    raw_price = item.get("price")
+                    price = parse_brl(raw_price) if raw_price is not None else None
+                    entry = {
+                        "store": "Mercado Livre",
+                        "title": title.strip(),
+                        "url": permalink.strip(),
+                        "price": price,
+                        "source": "ml:api",
+                    }
+                    if price is not None:
+                        if not any(r["url"] == entry["url"] for r in priced_results):
+                            priced_results.append(entry)
+                    else:
+                        if not any(r["url"] == entry["url"] for r in unpriced_results):
+                            unpriced_results.append(entry)
+        except Exception as exc:
+            log.warning("Erro ao buscar em /sites/MLB/search do Mercado Livre para '%s': %s", keyword, exc)
 
-    # 2. Fallback: /sites/MLB/search (anúncios gerais)
-    try:
-        url_search = "https://api.mercadolibre.com/sites/MLB/search"
-        params_search = {"q": keyword.strip(), "limit": limit}
-        resp = _http_get(url_search, params=params_search, headers=headers, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            for item in data.get("results", []):
-                title = item.get("title")
-                permalink = item.get("permalink")
-                if not permalink or not title:
-                    continue
-                raw_price = item.get("price")
-                price = parse_brl(raw_price) if raw_price is not None else None
-                results.append({
-                    "store": "Mercado Livre",
-                    "title": title.strip(),
-                    "url": permalink.strip(),
-                    "price": price,
-                    "source": "ml:api",
-                })
-    except Exception as exc:
-        log.warning("Erro ao buscar em /sites/MLB/search do Mercado Livre para '%s': %s", keyword, exc)
+    final_results = list(priced_results)
+    for unp in unpriced_results:
+        if len(final_results) >= limit:
+            break
+        if not any(r["url"] == unp["url"] for r in final_results):
+            final_results.append(unp)
 
-    return results[:limit]
+    return final_results[:limit]

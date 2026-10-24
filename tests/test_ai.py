@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 
 from app import db
 from app.ai import (
+    _call_gemini_generate_content,
+    _diversify_by_store,
     _gemini_filter_and_rank,
     _gemini_grounded_search,
     discover_product_links,
@@ -339,3 +341,163 @@ def test_should_auto_heal_ignores_transient_errors_and_triggers_on_real_expirati
     exc_410 = Exception("Gone")
     exc_410.response = MagicMock(status_code=410)
     assert _should_auto_heal(None, exc_410) is True
+
+
+def test_gemini_default_model(monkeypatch):
+    """Testa se o modelo padrão agora é gemini-3.8-flash quando não configurado."""
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    import app.ai as ai
+    ai._ACTIVE_GEMINI_MODEL = None
+    assert get_gemini_model() == "gemini-3.8-flash"
+
+
+def test_gemini_404_auto_fallback_and_caching(monkeypatch):
+    """Testa auto-fallback quando a API retorna 404 no longer available to new users."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-flash")
+    import app.ai as ai
+    ai._ACTIVE_GEMINI_MODEL = None
+
+    called_urls = []
+
+    def mock_post(url, **kwargs):
+        called_urls.append(url)
+        resp = MagicMock()
+        if "gemini-2.5-flash:" in url:
+            resp.status_code = 404
+            resp.text = "404: This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash instead."
+            return resp
+        elif "gemini-3.8-flash:" in url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "candidates": [{
+                    "groundingMetadata": {"groundingChunks": []},
+                    "content": {"parts": [{"text": "https://www.amazon.com.br/dp/B012345678"}]}
+                }]
+            }
+            return resp
+        resp.status_code = 404
+        resp.text = "Not found"
+        return resp
+
+    with patch("httpx.post", side_effect=mock_post):
+        results = _gemini_grounded_search("Notebook Dell Inspiron", "Notebook")
+        assert len(results) == 1
+        assert "amazon.com.br" in results[0]["url"]
+
+        # Verifica que tentou o modelo inicial e depois o modelo sugerido
+        assert any("gemini-2.5-flash:" in u for u in called_urls)
+        assert any("gemini-3.8-flash:" in u for u in called_urls)
+        # Verifica que o modelo ativo em cache agora é o que funcionou
+        assert ai._ACTIVE_GEMINI_MODEL == "gemini-3.8-flash"
+        assert get_gemini_model() == "gemini-3.8-flash"
+
+    # Segunda chamada já deve ir direto para o modelo funcional em cache
+    called_urls.clear()
+    with patch("httpx.post", side_effect=mock_post):
+        results = _gemini_grounded_search("Notebook Dell Inspiron", "Notebook")
+        assert len(results) == 1
+        assert not any("gemini-2.5-flash:" in u for u in called_urls)
+        assert any("gemini-3.8-flash:" in u for u in called_urls)
+
+
+def test_gemini_404_auto_fallback_list_order(monkeypatch):
+    """Testa fallback através da lista de modelos quando a mensagem de erro não sugere modelo."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-custom-old")
+    import app.ai as ai
+    ai._ACTIVE_GEMINI_MODEL = None
+
+    called_models = []
+
+    def mock_post(url, **kwargs):
+        model = url.split("/models/")[1].split(":")[0]
+        called_models.append(model)
+        resp = MagicMock()
+        if model == "gemini-custom-old":
+            resp.status_code = 404
+            resp.text = "Model not found"
+            return resp
+        if model == "gemini-3.8-flash":
+            resp.status_code = 404
+            resp.text = "Quota exceeded or not available"
+            return resp
+        if model == "gemini-2.5-flash-lite":
+            resp.status_code = 404
+            resp.text = "Quota exceeded or not available"
+            return resp
+        if model == "gemini-3-flash-preview":
+            resp.status_code = 200
+            resp.json.return_value = {
+                "candidates": [{
+                    "content": {"parts": [{"text": '{"matches": []}'}]}
+                }]
+            }
+            return resp
+        resp.status_code = 404
+        return resp
+
+    with patch("httpx.post", side_effect=mock_post):
+        res = _call_gemini_generate_content(headers={}, payload={})
+        assert res is not None
+        assert res.status_code == 200
+        assert called_models == ["gemini-custom-old", "gemini-3.8-flash", "gemini-2.5-flash-lite", "gemini-3-flash-preview"]
+        assert ai._ACTIVE_GEMINI_MODEL == "gemini-3-flash-preview"
+
+
+def test_diversify_by_store_round_robin():
+    """Testa intercalação round-robin entre lojas garantindo que pelo menos 1 de cada loja apareça."""
+    mock_results = [
+        {"store": "Shopee", "title": "Shopee Item 1", "url": "https://shopee.com.br/item1"},
+        {"store": "Shopee", "title": "Shopee Item 2", "url": "https://shopee.com.br/item2"},
+        {"store": "Shopee", "title": "Shopee Item 3", "url": "https://shopee.com.br/item3"},
+        {"store": "Shopee", "title": "Shopee Item 4", "url": "https://shopee.com.br/item4"},
+        {"store": "Shopee", "title": "Shopee Item 5", "url": "https://shopee.com.br/item5"},
+        {"store": "Mercado Livre", "title": "ML Item 1", "url": "https://mercadolivre.com.br/p/MLB1"},
+        {"store": "Mercado Livre", "title": "ML Item 2", "url": "https://mercadolivre.com.br/p/MLB2"},
+        {"store": "Amazon", "title": "Amazon Item 1", "url": "https://amazon.com.br/dp/A1"},
+    ]
+
+    diversified = _diversify_by_store(mock_results, max_results=6)
+    assert len(diversified) == 6
+
+    # Na 1ª rodada (primeiros 3 itens), deve haver exatamente 1 de cada uma das 3 lojas
+    first_three_stores = [item["store"] for item in diversified[:3]]
+    assert first_three_stores == ["Shopee", "Mercado Livre", "Amazon"]
+
+    # Na 2ª rodada, deve pegar o 2º item de Shopee e ML
+    next_two_stores = [item["store"] for item in diversified[3:5]]
+    assert next_two_stores == ["Shopee", "Mercado Livre"]
+
+    # Na 3ª rodada, pega o 3º item da Shopee
+    assert diversified[5]["store"] == "Shopee"
+    assert diversified[5]["title"] == "Shopee Item 3"
+
+
+def test_discover_product_links_diversifies_stores_in_result(monkeypatch):
+    """Testa que discover_product_links aplica a diversificação por loja no resultado final."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    shopee_items = [
+        {"store": "Shopee", "title": f"Notebook Lenovo IdeaPad {i}", "url": f"https://shopee.com.br/item{i}", "price": 2000.0 + i, "source": "shopee:api"}
+        for i in range(1, 6)
+    ]
+    ml_items = [
+        {"store": "Mercado Livre", "title": f"Notebook Lenovo IdeaPad ML {i}", "url": f"https://mercadolivre.com.br/p/MLB{i}", "price": 2100.0 + i, "source": "ml:api"}
+        for i in range(1, 3)
+    ]
+
+    with patch("app.ai.search_shopee_offers", return_value=shopee_items), \
+         patch("app.ai.search_mercadolivre_offers", return_value=ml_items):
+
+        res = discover_product_links("Notebook Lenovo IdeaPad", max_results=6)
+        results = res["results"]
+        assert len(results) == 6
+
+        # Garante que as lojas foram intercaladas em vez de 5 Shopee e 1 ML
+        assert results[0]["store"] == "Shopee"
+        assert results[1]["store"] == "Mercado Livre"
+        assert results[2]["store"] == "Shopee"
+        assert results[3]["store"] == "Mercado Livre"
+        assert results[4]["store"] == "Shopee"
+        assert results[5]["store"] == "Shopee"
