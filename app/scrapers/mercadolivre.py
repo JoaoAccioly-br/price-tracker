@@ -163,6 +163,28 @@ def refresh_access_token() -> str | None:
 
 
 
+def _is_ml_offer_available(item: dict) -> bool:
+    """Verifica se um item/oferta retornado pela API do Mercado Livre está disponível.
+
+    Endpoints como /products/{id}/items não retornam 'status' nem 'available_quantity'
+    (pois listam apenas ofertas ativas), e /items pode omitir 'available_quantity'
+    em anúncios de terceiros.
+    """
+    if not isinstance(item, dict):
+        return False
+    status = item.get("status")
+    if status is not None and str(status).strip().lower() != "active":
+        return False
+    qty = item.get("available_quantity")
+    if qty is not None:
+        try:
+            if int(qty) <= 0:
+                return False
+        except (ValueError, TypeError):
+            pass
+    return True
+
+
 def extract_candidate_ids(url: str) -> list[str]:
     """Extrai todos os identificadores MLB possíveis da URL (catálogo, item_id, path)."""
     ids: list[str] = []
@@ -262,9 +284,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
                             body = entry.get("body", {})
                             if body.get("price") is not None:
                                 price = float(body["price"])
-                                available = body.get("status", "active") == "active" and (
-                                    body.get("available_quantity", 1) > 0
-                                )
+                                available = _is_ml_offer_available(body)
                                 name = body.get("title") or body.get("name")
                                 log.info(
                                     "[ML-API] Preço R$ %.2f obtido via multiget items (%s)",
@@ -294,9 +314,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
                             item_price = item.get("price")
                             if item_price is not None:
                                 price = float(item_price)
-                                available = item.get("status") == "active" or (
-                                    item.get("available_quantity", 0) > 0
-                                )
+                                available = _is_ml_offer_available(item)
                                 name = item.get("title") or name
                                 log.info(
                                     "[ML-API] Preço R$ %.2f obtido via lista de ofertas (%s)",
@@ -323,7 +341,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
                         if isinstance(bb, dict):
                             if bb.get("price") is not None:
                                 price = float(bb["price"])
-                                available = bb.get("status", "active") == "active"
+                                available = _is_ml_offer_available(bb)
                             winner_item_id = bb.get("item_id") or bb.get("id")
                             if price is None and winner_item_id:
                                 item_r = _http_get(
@@ -341,9 +359,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
                                         w_body = w_json[0].get("body", {})
                                         if w_body.get("price") is not None:
                                             price = float(w_body["price"])
-                                            available = w_body.get("status") == "active" and (
-                                                w_body.get("available_quantity", 0) > 0
-                                            )
+                                            available = _is_ml_offer_available(w_body)
                                             name = w_body.get("title") or name
                         elif isinstance(bb, str) and bb.startswith("MLB"):
                             item_r = _http_get(
@@ -361,17 +377,13 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
                                     w_body = w_json[0].get("body", {})
                                     if w_body.get("price") is not None:
                                         price = float(w_body["price"])
-                                        available = w_body.get("status") == "active" and (
-                                            w_body.get("available_quantity", 0) > 0
-                                        )
+                                        available = _is_ml_offer_available(w_body)
                                         name = w_body.get("title") or name
 
                         # 2. Anúncio direto (data['price'])
                         if price is None and data.get("price") is not None:
                             price = float(data["price"])
-                            available = data.get("status", "active") == "active" and (
-                                data.get("available_quantity", 1) > 0
-                            )
+                            available = _is_ml_offer_available(data)
 
                         # 3. Variações (pickers)
                         if price is None and "pickers" in data and isinstance(data["pickers"], list):
@@ -380,7 +392,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
                                     prod_bb = prod.get("buy_box_winner")
                                     if isinstance(prod_bb, dict) and prod_bb.get("price") is not None:
                                         price = float(prod_bb["price"])
-                                        available = prod_bb.get("status", "active") == "active"
+                                        available = _is_ml_offer_available(prod_bb)
                                         break
                                 if price is not None:
                                     break
@@ -398,7 +410,7 @@ def fetch_from_api(url: str, token: str) -> PriceResult:
                                     c_bb = child_data.get("buy_box_winner")
                                     if isinstance(c_bb, dict) and c_bb.get("price") is not None:
                                         price = float(c_bb["price"])
-                                        available = c_bb.get("status", "active") == "active"
+                                        available = _is_ml_offer_available(c_bb)
                                         name = child_data.get("title") or name
                                         break
 
@@ -600,7 +612,17 @@ def parse(html: str, css_selector: str | None = None) -> PriceResult:
     if price is None:
         gen = parse_html(html, css_selector)
         if gen.price is not None:
-            return gen
+            gen_available = gen.available
+            if not gen_available and not out_of_stock_el and "OutOfStock" not in html:
+                gen_available = True
+            return PriceResult(
+                price=gen.price,
+                available=available and gen_available,
+                name=name or gen.name,
+                source=gen.source,
+                coupon_code=gen.coupon_code,
+                final_price=gen.final_price or gen.price,
+            )
 
     if price is None:
         return PriceResult(price=None, available=False, name=name, source="ml:not-found")
@@ -615,6 +637,39 @@ def parse(html: str, css_selector: str | None = None) -> PriceResult:
         coupon_code=code,
         final_price=final or price,
     )
+
+
+def _is_valid_br_ml_item(item: dict, permalink: str) -> bool:
+    """Verifica se um item retornado nas buscas do Mercado Livre é válido para o Brasil.
+
+    Descarta links estrangeiros, moedas diferentes de BRL e itens de compra internacional (CBT).
+    """
+    if not permalink:
+        return False
+    parsed = urlparse(permalink)
+    hostname = (parsed.hostname or "").lower()
+    if not (hostname == "mercadolivre.com.br" or hostname.endswith(".mercadolivre.com.br")):
+        return False
+
+    curr = item.get("currency_id")
+    if curr and str(curr).strip().upper() != "BRL":
+        return False
+
+    bb = item.get("buy_box_winner")
+    if isinstance(bb, dict):
+        bb_curr = bb.get("currency_id")
+        if bb_curr and str(bb_curr).strip().upper() != "BRL":
+            return False
+
+    intl_mode = item.get("international_delivery_mode")
+    if intl_mode is not None and str(intl_mode).strip().lower() not in ("", "none"):
+        return False
+
+    tags = item.get("tags")
+    if isinstance(tags, list) and "cbt_item" in tags:
+        return False
+
+    return True
 
 
 def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
@@ -648,7 +703,10 @@ def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
                 permalink = item.get("permalink") or (f"https://www.mercadolivre.com.br/p/{prod_id}" if prod_id else "")
                 if not permalink or not name:
                     continue
+                if not _is_valid_br_ml_item(item, permalink):
+                    continue
                 price = None
+                winner_item_id = None
                 bb = item.get("buy_box_winner")
                 if isinstance(bb, dict):
                     winner_item_id = bb.get("item_id") or bb.get("id")
@@ -668,6 +726,9 @@ def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
                     "source": "ml:api",
                     "prod_id": prod_id,
                 }
+                if winner_item_id:
+                    entry["winner_item_id"] = winner_item_id
+
                 if price is not None:
                     priced_results.append(entry)
                 else:
@@ -688,6 +749,8 @@ def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
                     permalink = item.get("permalink")
                     if not permalink or not title:
                         continue
+                    if not _is_valid_br_ml_item(item, permalink):
+                        continue
                     raw_price = item.get("price")
                     price = parse_brl(raw_price) if raw_price is not None else None
                     entry = {
@@ -707,8 +770,8 @@ def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
             log.warning("Erro ao buscar em /sites/MLB/search do Mercado Livre para '%s': %s", keyword, exc)
 
     # 2.5 Enriquecimento de preços para itens unpriced
-    if unpriced_results and len(priced_results) < 3:
-        to_enrich_count = min(3 - len(priced_results), len(unpriced_results))
+    if unpriced_results and len(priced_results) < limit:
+        to_enrich_count = min(limit - len(priced_results), len(unpriced_results))
         remaining_unpriced: list[dict] = []
         for idx, unp in enumerate(unpriced_results):
             if idx < to_enrich_count:
@@ -720,13 +783,13 @@ def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
                         if p_resp.status_code == 200:
                             p_data = p_resp.json()
                             bb = p_data.get("buy_box_winner")
-                            if isinstance(bb, dict) and bb.get("price") is not None:
+                            if isinstance(bb, dict) and bb.get("price") is not None and _is_ml_offer_available(bb):
                                 enriched_price = parse_brl(bb.get("price"))
                             elif "pickers" in p_data and isinstance(p_data["pickers"], list):
                                 for picker in p_data["pickers"]:
                                     for prod in picker.get("products", []):
                                         prod_bb = prod.get("buy_box_winner")
-                                        if isinstance(prod_bb, dict) and prod_bb.get("price") is not None:
+                                        if isinstance(prod_bb, dict) and prod_bb.get("price") is not None and _is_ml_offer_available(prod_bb):
                                             enriched_price = parse_brl(prod_bb.get("price"))
                                             break
                                     if enriched_price is not None:
@@ -734,10 +797,31 @@ def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
                     except Exception as exc:
                         log.debug("Erro ao consultar /products/%s para enriquecimento: %s", p_id, exc)
 
+                winner_id = unp.get("winner_item_id")
+                if enriched_price is None and winner_id:
+                    try:
+                        w_resp = _http_get(
+                            f"https://api.mercadolibre.com/items?ids={winner_id}",
+                            headers=headers,
+                            timeout=5,
+                        )
+                        if w_resp.status_code == 200:
+                            w_json = w_resp.json()
+                            if (
+                                isinstance(w_json, list)
+                                and w_json
+                                and w_json[0].get("code") == 200
+                            ):
+                                w_body = w_json[0].get("body", {})
+                                if w_body.get("price") is not None and _is_ml_offer_available(w_body):
+                                    enriched_price = parse_brl(w_body["price"])
+                    except Exception as exc:
+                        log.debug("Erro ao consultar /items?ids=%s para enriquecimento: %s", winner_id, exc)
+
                 if enriched_price is None:
                     try:
                         h_res = _fetch_catalog_html_price(unp["url"])
-                        if h_res and h_res.price is not None:
+                        if h_res and h_res.price is not None and h_res.available:
                             enriched_price = h_res.price
                     except Exception as exc:
                         log.debug("Erro no fallback HTML de enriquecimento para %s: %s", unp["url"], exc)
@@ -799,11 +883,4 @@ def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
             except Exception as pub_exc:
                 log.warning("Erro no fallback de busca pública do Mercado Livre: %s", pub_exc)
 
-    final_results = list(priced_results)
-    for unp in unpriced_results:
-        if len(final_results) >= limit:
-            break
-        if not any(r["url"] == unp["url"] for r in final_results):
-            final_results.append(unp)
-
-    return final_results[:limit]
+    return priced_results[:limit]

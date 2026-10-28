@@ -161,6 +161,53 @@ def _detect_store_name(url: str) -> str:
         return "Loja"
 
 
+def _is_brazilian_store_url(url: str) -> bool:
+    """Verifica se a URL pertence a uma loja/marketplace operando no Brasil."""
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urlparse(url.strip())
+    except Exception:
+        return False
+
+    if not parsed.hostname:
+        return False
+
+    host = parsed.hostname.lower().rstrip(".")
+    path = (parsed.path or "").lower()
+
+    # Rejeita domínios estrangeiros conhecidos
+    foreign_domains = (
+        "mercadolibre.",
+        "ebay.",
+        "walmart.",
+        "bestbuy.",
+        "newegg.",
+        "target.com",
+        "bhphotovideo.",
+    )
+    if any(fd in host for fd in foreign_domains):
+        return False
+
+    # Validação de marketplaces com TLD específico por país
+    if "amazon." in host and not host.endswith("amazon.com.br"):
+        return False
+    if "shopee." in host and not host.endswith("shopee.com.br"):
+        return False
+    if "mercadolivre." in host and not host.endswith("mercadolivre.com.br"):
+        return False
+
+    # Fabricantes e marketplaces globais aceitos
+    global_allowed = ("dell.com", "lenovo.com", "aliexpress.com")
+    if any(host == gh or host.endswith("." + gh) for gh in global_allowed):
+        if re.search(r"/(?:en-[a-z]{2}|es-[a-z]{2}|fr-[a-z]{2}|de-[a-z]{2}|it-[a-z]{2})(/|$)", path):
+            return False
+        return True
+
+    # Para qualquer outro domínio, exige terminação .br
+    return host.endswith(".br")
+
+
 def _gemini_grounded_search(
     product_name: str,
     category: str = "Notebook",
@@ -171,14 +218,18 @@ def _gemini_grounded_search(
     if not api_key:
         return []
 
-    store_filter_hint = (
-        f"especificamente na loja {target_store}"
-        if target_store
-        else "em lojas brasileiras confiáveis (como Amazon Brasil, KaBuM, Magazine Luiza, Mercado Livre, Shopee)"
-    )
+    if target_store:
+        store_filter_hint = (
+            f"especificamente na loja {target_store} do Brasil (domínio brasileiro .com.br, com preços em Reais R$)"
+        )
+    else:
+        store_filter_hint = (
+            "em lojas brasileiras confiáveis (.com.br, como Amazon Brasil, KaBuM, Magazine Luiza, Mercado Livre, Shopee)"
+        )
     prompt = (
-        f"Encontre links diretos de páginas de compra ativas do produto '{product_name}' "
+        f"Encontre links diretos de páginas de compra ativas e em estoque do produto '{product_name}' "
         f"(Categoria: {category}) {store_filter_hint}. "
+        "Exija apenas páginas de produtos ativos e em estoque no Brasil (em Reais R$), descartando produtos esgotados, indisponíveis ou de sites internacionais. "
         "Retorne links exatos e completos das páginas do produto (não use links de páginas de busca geral)."
     )
 
@@ -250,6 +301,8 @@ def _gemini_grounded_search(
             validate_url_host(u)
         except UnsafeURLError:
             continue
+        if not _is_brazilian_store_url(u):
+            continue
         parsed = urlparse(u)
         path = parsed.path.lower()
         if "/search" in path or "/busca" in path or "/pesquisa" in path or "google.com" in (parsed.hostname or ""):
@@ -293,11 +346,15 @@ def search_kabum_offers(keyword: str, limit: int = 3) -> list[dict]:
             for item in items:
                 prod_id = item.get("id") or item.get("code")
                 attrs = item.get("attributes", {})
+                if attrs.get("available") is False or item.get("available") is False:
+                    continue
                 title = attrs.get("title") or item.get("title")
                 if not prod_id or not title:
                     continue
                 raw_price = attrs.get("price_with_discount") or attrs.get("price") or item.get("price")
                 price = parse_brl(raw_price) if raw_price is not None else None
+                if price is None or price <= 0:
+                    continue
                 url = f"https://www.kabum.com.br/produto/{prod_id}"
                 results.append({
                     "store": "KaBuM!",
@@ -344,7 +401,7 @@ def search_kabum_offers(keyword: str, limit: int = 3) -> list[dict]:
                     title = title_el.get_text(strip=True) if title_el else ""
                     price_el = card.select_one(".priceCard, span.priceCard")
                     price = parse_brl(price_el.get_text(strip=True)) if price_el else None
-                    if title:
+                    if title and price is not None and price > 0:
                         results.append({
                             "store": "KaBuM!",
                             "title": title,
@@ -402,6 +459,9 @@ def search_amazon_offers(keyword: str, limit: int = 3) -> list[dict]:
                         if fraction:
                             val += "," + fraction.get_text(strip=True)
                         price = parse_brl(val)
+
+                if price is None or price <= 0:
+                    continue
 
                 item_url = f"https://www.amazon.com.br/dp/{asin}"
                 results.append({
@@ -541,6 +601,49 @@ def _diversify_by_store(results: list[dict], max_results: int) -> list[dict]:
     return diversified
 
 
+def _validate_and_enrich_candidates(
+    candidates: list[dict],
+    max_scrape_checks: int = 4,
+) -> list[dict]:
+    """Valida lojas brasileiras e enriquece/valida candidatos sem preço via scraping em tempo real."""
+    valid: list[dict] = []
+    scrape_checks = 0
+
+    for c in candidates:
+        url = c.get("url", "")
+        if not _is_brazilian_store_url(url):
+            continue
+
+        raw_price = c.get("price")
+        if raw_price is not None:
+            try:
+                if float(raw_price) > 0:
+                    valid.append(c)
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        # Candidato sem preço válido (ex: vindo de Gemini Grounding)
+        if scrape_checks < max_scrape_checks:
+            scrape_checks += 1
+            try:
+                res = scrape(url)
+                if res and res.price is not None and res.price > 0 and res.available is not False:
+                    c_updated = dict(c)
+                    c_updated["price"] = res.final_price or res.price
+                    if res.name and c.get("source", "").startswith("gemini:"):
+                        c_updated["title"] = res.name
+                    valid.append(c_updated)
+                else:
+                    log.debug("Candidato descartado (sem preço ou indisponível): %s", url)
+            except Exception as exc:
+                log.debug("Erro ao verificar candidato %s: %s", url, exc)
+        else:
+            log.debug("Limite de scrape checks atingido. Candidato sem preço descartado: %s", url)
+
+    return valid
+
+
 def discover_product_links(
     product_name: str,
     category: str = "Notebook",
@@ -617,6 +720,9 @@ def discover_product_links(
         if canon not in seen_keys:
             seen_keys.add(canon)
             deduped.append(c)
+
+    # Validação e enriquecimento (lojas brasileiras + scrape de candidatos sem preço)
+    deduped = _validate_and_enrich_candidates(deduped)
 
     # 7. Curadoria e Ranking com Gemini ou Heurística
     # Economia de cota: se grounding já foi chamado nesta execução, usa filtragem heurística direta

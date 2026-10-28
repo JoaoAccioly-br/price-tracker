@@ -266,7 +266,7 @@ def test_fetch_from_api_catalog_product_no_offers_returns_sem_oferta_ativa():
 
 
 def test_search_mercadolivre_offers_catalog_and_fallback():
-    """Testa busca no ML anexando item_id a permalinks e buscando em /sites/MLB/search quando sem preço."""
+    """Testa busca no ML descartando catálogo sem preço não enriquecido e retornando apenas anúncio ativo."""
     def mock_get(req_url, **kwargs):
         resp = MagicMock()
         if "/products/search" in req_url:
@@ -300,16 +300,61 @@ def test_search_mercadolivre_offers_catalog_and_fallback():
 
     with patch("httpx.get", side_effect=mock_get):
         results = mercadolivre.search_mercadolivre_offers("Ryzen 7", limit=3)
-        assert len(results) == 2
-
-        # Primeiro item tem preço vindo de /sites/MLB/search
+        # O catálogo sem preço não enriquecido NÃO é incluído no resultado final
+        assert len(results) == 1
         assert results[0]["title"] == "Anúncio Geral Ativo"
         assert results[0]["price"] == 899.00
 
-        # Segundo item é o catálogo sem preço, mas com pdp_filters anexado
-        assert results[1]["title"] == "Catálogo Sem Preço"
-        assert results[1]["price"] is None
-        assert "pdp_filters=item_id:MLB99887766" in results[1]["url"]
+
+def test_search_mercadolivre_offers_enriches_via_winner_item_id():
+    """Testa enriquecimento de catálogo unpriced via /items?ids={winner_item_id}."""
+    def mock_get(req_url, **kwargs):
+        resp = MagicMock()
+        if "/products/search" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "results": [
+                    {
+                        "id": "MLB61776379",
+                        "name": "Catálogo Sem Preço Direto",
+                        "permalink": "https://www.mercadolivre.com.br/p/MLB61776379",
+                        "buy_box_winner": {"item_id": "MLB99887766", "price": None},
+                    }
+                ]
+            }
+            return resp
+        elif "/sites/MLB/search" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {"results": []}
+            return resp
+        elif "/products/MLB61776379" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {"id": "MLB61776379", "buy_box_winner": None}
+            return resp
+        elif "/items?ids=MLB99887766" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = [
+                {
+                    "code": 200,
+                    "body": {
+                        "id": "MLB99887766",
+                        "title": "Item Winner",
+                        "price": 1050.00,
+                        "status": "active",
+                    },
+                }
+            ]
+            return resp
+        resp.status_code = 404
+        return resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        results = mercadolivre.search_mercadolivre_offers("Ryzen 7", limit=3)
+        assert len(results) == 1
+        assert results[0]["title"] == "Catálogo Sem Preço Direto"
+        assert results[0]["price"] == 1050.00
+        assert results[0]["source"] == "ml:api-enriched"
+        assert "pdp_filters=item_id:MLB99887766" in results[0]["url"]
 
 
 def test_search_mercadolivre_offers_enriches_unpriced_catalog_items():
@@ -424,6 +469,200 @@ def test_search_mercadolivre_offers_public_html_fallback():
         assert results[0]["title"] == "Mouse Gamer RGB 16000 DPI"
         assert results[0]["price"] == 249.50
         assert results[0]["source"] == "ml:public-search"
+
+
+def test_fetch_from_api_products_items_without_status_and_quantity():
+    """Testa que /products/{id}/items sem 'status' e 'available_quantity' é lido com available=True."""
+    url = "https://www.mercadolivre.com.br/p/MLB38199035"
+
+    def mock_get(req_url, **kwargs):
+        resp = MagicMock()
+        if "/products/MLB38199035/items" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = [
+                {
+                    "item_id": "MLB11223344",
+                    "title": "Mouse Gamer Delux",
+                    "price": 199.90,
+                }
+            ]
+            return resp
+        elif "/products/MLB38199035" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {"id": "MLB38199035", "buy_box_winner": None}
+            return resp
+        resp.status_code = 404
+        return resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        res = mercadolivre.fetch_from_api(url, token="test_token")
+        assert res.price == 199.90
+        assert res.available is True
+        assert res.source == "ml:api-oficial"
+
+
+def test_fetch_from_api_buybox_winner_multiget_missing_available_quantity():
+    """Testa buy_box_winner buscando /items?ids= com status 'active' e available_quantity ausente."""
+    url = "https://www.mercadolivre.com.br/p/MLB38199035"
+
+    def mock_get(req_url, **kwargs):
+        resp = MagicMock()
+        if "/products/MLB38199035" in req_url and "items" not in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "id": "MLB38199035",
+                "name": "Mouse Gamer Delux M900",
+                "buy_box_winner": {
+                    "item_id": "MLB99887766",
+                    "price": None,
+                },
+            }
+            return resp
+        elif "/items?ids=MLB99887766" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = [
+                {
+                    "code": 200,
+                    "body": {
+                        "id": "MLB99887766",
+                        "title": "Mouse Gamer Delux M900 Oferta",
+                        "price": 185.00,
+                        "status": "active",
+                    },
+                }
+            ]
+            return resp
+        resp.status_code = 404
+        return resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        res = mercadolivre.fetch_from_api(url, token="test_token")
+        assert res.price == 185.00
+        assert res.available is True
+        assert res.source == "ml:api-oficial"
+
+
+def test_search_mercadolivre_offers_filters_international_and_unpriced():
+    """Testa que itens CBT, estrangeiros, com moeda estrangeira e desprovidos de preço são filtrados."""
+    def mock_get(req_url, **kwargs):
+        resp = MagicMock()
+        if "/products/search" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "results": [
+                    # 1. Domínio estrangeiro (ex.: Argentina)
+                    {
+                        "id": "MLA111",
+                        "name": "Produto Argentino",
+                        "permalink": "https://articulo.mercadolibre.com.ar/MLA-111",
+                        "buy_box_winner": {"price": 100.0, "currency_id": "ARS"},
+                    },
+                    # 2. Moeda estrangeira USD
+                    {
+                        "id": "MLB222",
+                        "name": "Produto Dólar",
+                        "permalink": "https://www.mercadolivre.com.br/p/MLB222",
+                        "currency_id": "USD",
+                        "buy_box_winner": {"price": 50.0},
+                    },
+                    # 3. Compra internacional via international_delivery_mode
+                    {
+                        "id": "MLB333",
+                        "name": "Produto Importado CBT",
+                        "permalink": "https://www.mercadolivre.com.br/p/MLB333",
+                        "international_delivery_mode": "customs",
+                        "buy_box_winner": {"price": 200.0},
+                    },
+                    # 4. Compra internacional via tag cbt_item
+                    {
+                        "id": "MLB444",
+                        "name": "Produto Tag CBT",
+                        "permalink": "https://www.mercadolivre.com.br/p/MLB444",
+                        "tags": ["cbt_item", "other_tag"],
+                        "buy_box_winner": {"price": 150.0},
+                    },
+                    # 5. Item de catálogo esgotado sem preço e sem enriquecimento
+                    {
+                        "id": "MLB555",
+                        "name": "Catálogo Sem Preço",
+                        "permalink": "https://www.mercadolivre.com.br/p/MLB555",
+                        "buy_box_winner": None,
+                    },
+                    # 6. Item BR válido e precificado
+                    {
+                        "id": "MLB666",
+                        "name": "Produto Nacional Válido",
+                        "permalink": "https://www.mercadolivre.com.br/p/MLB666",
+                        "currency_id": "BRL",
+                        "buy_box_winner": {"price": 299.90, "currency_id": "BRL"},
+                    },
+                ]
+            }
+            return resp
+        elif "/sites/MLB/search" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "results": [
+                    # Item CBT em busca geral
+                    {
+                        "title": "Anúncio Geral CBT",
+                        "permalink": "https://produto.mercadolivre.com.br/MLB-777",
+                        "price": 120.0,
+                        "tags": ["cbt_item"],
+                    },
+                    # Item geral válido
+                    {
+                        "title": "Anúncio Geral Nacional",
+                        "permalink": "https://produto.mercadolivre.com.br/MLB-888",
+                        "price": 310.0,
+                    },
+                ]
+            }
+            return resp
+        resp.status_code = 404
+        return resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        results = mercadolivre.search_mercadolivre_offers("teste", limit=5)
+        titles = [r["title"] for r in results]
+        assert "Produto Nacional Válido" in titles
+        assert "Anúncio Geral Nacional" in titles
+        assert "Produto Argentino" not in titles
+        assert "Produto Dólar" not in titles
+        assert "Produto Importado CBT" not in titles
+        assert "Produto Tag CBT" not in titles
+        assert "Catálogo Sem Preço" not in titles
+        assert "Anúncio Geral CBT" not in titles
+        assert all(r["price"] is not None for r in results)
+
+
+def test_parse_fallback_json_ld_preserves_available():
+    """Testa que o fallback parse_html preserva available e título do produto."""
+    html = """
+    <html>
+      <head>
+        <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "Product",
+          "name": "Teclado Mecânico JSON",
+          "offers": {
+            "@type": "Offer",
+            "price": "250.00"
+          }
+        }
+        </script>
+      </head>
+      <body>
+        <h1 class="ui-pdp-title">Teclado Mecânico Gamer RGB</h1>
+      </body>
+    </html>
+    """
+    res = mercadolivre.parse(html)
+    assert res.price == 250.00
+    assert res.available is True
+    assert res.name == "Teclado Mecânico Gamer RGB"
+
 
 
 

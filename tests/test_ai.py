@@ -10,6 +10,8 @@ from app.ai import (
     _diversify_by_store,
     _gemini_filter_and_rank,
     _gemini_grounded_search,
+    _is_brazilian_store_url,
+    _validate_and_enrich_candidates,
     discover_product_links,
     get_gemini_api_key,
     get_gemini_model,
@@ -681,3 +683,283 @@ def test_discover_product_links_multi_store_diversification(monkeypatch):
         # Na 2ª rodada, deve haver o 2º item de cada loja
         second_four_stores = {r["store"] for r in results[4:8]}
         assert second_four_stores == {"Shopee", "Mercado Livre", "KaBuM!", "Amazon"}
+
+
+def test_is_brazilian_store_url():
+    """Testa bloqueio de domínios/URLs estrangeiras e permissão de lojas brasileiras."""
+    # URLs que devem ser barradas
+    blocked_urls = [
+        "https://www.mercadolibre.com.ar/p/MLA12345",
+        "https://www.amazon.com/dp/B08N5WRWNW",
+        "https://www.ebay.com/itm/12345678",
+        "https://www.dell.com/en-us/shop/dell-laptops/spd/inspiron-15",
+        "https://www.dell.com/en-gb/shop/laptops",
+        "https://www.dell.com/es-es/shop",
+        "https://www.walmart.com/ip/laptop/123",
+        "https://www.bestbuy.com/site/laptop",
+        "https://www.newegg.com/p/N82E16834156",
+        "https://www.target.com/p/item/-/A-123",
+        "https://www.bhphotovideo.com/c/product/123",
+        "https://shopee.com.my/item-123",
+        "https://mercadolivre.com/p/123",
+        "",
+        "not_a_valid_url",
+    ]
+    for url in blocked_urls:
+        assert _is_brazilian_store_url(url) is False, f"Deveria ter bloqueado: {url}"
+
+    # URLs que devem ser permitidas
+    allowed_urls = [
+        "https://www.mercadolivre.com.br/p/MLB12345",
+        "https://www.amazon.com.br/dp/B08N5WRWNW",
+        "https://www.kabum.com.br/produto/123456",
+        "https://www.dell.com/pt-br/shop/dell-laptops/spd/inspiron-15",
+        "https://www.magazineluiza.com.br/produto/123",
+        "https://pt.aliexpress.com/item/1005001234.html",
+        "https://shopee.com.br/product/123/456",
+        "https://lenovo.com/br/pt/laptops/ideapad",
+    ]
+    for url in allowed_urls:
+        assert _is_brazilian_store_url(url) is True, f"Deveria ter permitido: {url}"
+
+
+def test_gemini_grounded_search_filters_foreign_urls_with_target_store(monkeypatch):
+    """Testa que _gemini_grounded_search filtra URLs estrangeiras mesmo quando target_store é especificado."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "candidates": [
+            {
+                "groundingMetadata": {
+                    "groundingChunks": [
+                        {
+                            "web": {
+                                "uri": "https://www.amazon.com/dp/B0CX_USA_STORE",
+                                "title": "Notebook Acer Aspire 5 Amazon US",
+                            }
+                        },
+                        {
+                            "web": {
+                                "uri": "https://www.amazon.com.br/dp/B0CX_BRAZIL_STORE",
+                                "title": "Notebook Acer Aspire 5 Amazon BR",
+                            }
+                        },
+                        {
+                            "web": {
+                                "uri": "https://www.ebay.com/itm/12345",
+                                "title": "Notebook Acer Aspire 5 eBay",
+                            }
+                        },
+                    ]
+                },
+                "content": {
+                    "parts": [
+                        {
+                            "text": "Link estrangeiro no texto: https://amazon.co.uk/dp/B0CX_UK e link BR: https://www.amazon.com.br/dp/B0CX_ANOTHER_BR"
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+
+    with patch("httpx.post", return_value=mock_resp) as mock_post:
+        results = _gemini_grounded_search("Notebook Acer Aspire 5", "Notebook", target_store="Amazon")
+        # Deve conter apenas as URLs brasileiras da Amazon
+        assert len(results) == 2
+        for r in results:
+            assert "amazon.com.br" in r["url"]
+            assert _is_brazilian_store_url(r["url"]) is True
+
+        # Verifica que o prompt incluiu exigência de lojas brasileiras .com.br / Reais R$ mesmo com target_store
+        call_kwargs = mock_post.call_args[1]
+        sent_prompt = call_kwargs["json"]["contents"][0]["parts"][0]["text"]
+        assert ".com.br" in sent_prompt
+        assert "Reais R$" in sent_prompt
+
+
+def test_validate_and_enrich_candidates_with_scraping():
+    """Testa validação e enriquecimento: scraping de candidatos sem preço, descartando esgotados/estrangeiros."""
+    candidates = [
+        # 1. Candidato com preço válido já presente -> mantido sem scrape
+        {"store": "Amazon", "title": "Produto 1", "url": "https://www.amazon.com.br/dp/1", "price": 1500.0, "source": "amazon:search"},
+        # 2. Candidato estrangeiro -> descartado de imediato
+        {"store": "Amazon", "title": "Produto US", "url": "https://www.amazon.com/dp/2", "price": 200.0, "source": "amazon:search"},
+        # 3. Candidato sem preço (Grounding) ativo e com preço -> enriquecido e mantido
+        {"store": "Dell", "title": "Dell Inspiron", "url": "https://www.dell.com/pt-br/shop/dell-laptops/spd/3", "price": None, "source": "gemini:grounded"},
+        # 4. Candidato sem preço (Grounding) esgotado (available=False) -> descartado
+        {"store": "KaBuM!", "title": "Placa de Vídeo Esgotada", "url": "https://www.kabum.com.br/produto/4", "price": None, "source": "gemini:grounded"},
+        # 5. Candidato sem preço cujo scrape falha (retorna price=None) -> descartado
+        {"store": "KaBuM!", "title": "Produto sem estoque", "url": "https://www.kabum.com.br/produto/5", "price": None, "source": "gemini:text"},
+    ]
+
+    def mock_scrape(url, css_selector=None):
+        if "/spd/3" in url:
+            return PriceResult(price=3200.0, available=True, final_price=2999.0, name="Dell Inspiron 15 3000 Atualizado")
+        if "/produto/4" in url:
+            return PriceResult(price=1800.0, available=False)
+        if "/produto/5" in url:
+            return PriceResult(price=None, available=False)
+        return None
+
+    with patch("app.ai.scrape", side_effect=mock_scrape):
+        validated = _validate_and_enrich_candidates(candidates, max_scrape_checks=4)
+
+        assert len(validated) == 2
+        # Item 1 mantido
+        assert validated[0]["url"] == "https://www.amazon.com.br/dp/1"
+        assert validated[0]["price"] == 1500.0
+        # Item 3 enriquecido
+        assert validated[1]["url"] == "https://www.dell.com/pt-br/shop/dell-laptops/spd/3"
+        assert validated[1]["price"] == 2999.0
+        assert validated[1]["title"] == "Dell Inspiron 15 3000 Atualizado"
+
+
+def test_discover_product_links_validates_grounding_candidates_and_filters_out_of_stock(monkeypatch):
+    """Testa discover_product_links validando candidatos de Grounding via scrape e descartando esgotados."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+
+    # APIs das lojas retornam vazio para forçar o Grounding
+    with patch("app.ai.search_shopee_offers", return_value=[]), \
+         patch("app.ai.search_mercadolivre_offers", return_value=[]), \
+         patch("app.ai.search_kabum_offers", return_value=[]), \
+         patch("app.ai.search_amazon_offers", return_value=[]):
+
+        mock_grounded = [
+            {"store": "Amazon", "title": "Notebook Acer Aspire", "url": "https://www.amazon.com.br/dp/B0_OK", "price": None, "source": "gemini:grounded"},
+            {"store": "KaBuM!", "title": "Notebook Acer Esgotado", "url": "https://www.kabum.com.br/produto/B0_DEAD", "price": None, "source": "gemini:grounded"},
+            {"store": "eBay", "title": "Notebook Acer eBay", "url": "https://www.ebay.com/itm/B0_EBAY", "price": None, "source": "gemini:grounded"},
+        ]
+
+        def mock_scrape(url, css_selector=None):
+            if "B0_OK" in url:
+                return PriceResult(price=2799.0, available=True, final_price=2799.0, name="Notebook Acer Aspire 5 A515")
+            if "B0_DEAD" in url:
+                return PriceResult(price=None, available=False)
+            return None
+
+        with patch("app.ai._gemini_grounded_search", return_value=mock_grounded), \
+             patch("app.ai.scrape", side_effect=mock_scrape):
+
+            disc = discover_product_links("Notebook Acer Aspire 5")
+            results = disc["results"]
+
+            # Somente o link ativo da Amazon BR deve sobreviver
+            assert len(results) == 1
+            assert results[0]["url"] == "https://www.amazon.com.br/dp/B0_OK"
+            assert results[0]["price"] == 2799.0
+
+
+def test_search_kabum_offers_ignores_unavailable_and_zero_price():
+    """Testa que search_kabum_offers descarta itens indisponíveis ou sem preço válido (API v2 e fallback HTML)."""
+    # 1. API v2
+    api_resp = MagicMock()
+    api_resp.status_code = 200
+    api_resp.json.return_value = {
+        "data": [
+            {
+                "id": "111",
+                "attributes": {
+                    "title": "Produto Esgotado",
+                    "available": False,
+                    "price_with_discount": 100.0,
+                },
+            },
+            {
+                "id": "222",
+                "attributes": {
+                    "title": "Produto Sem Preço",
+                    "available": True,
+                    "price_with_discount": None,
+                },
+            },
+            {
+                "id": "333",
+                "attributes": {
+                    "title": "Produto Preço Zero",
+                    "available": True,
+                    "price_with_discount": 0.0,
+                },
+            },
+            {
+                "id": "444",
+                "attributes": {
+                    "title": "Produto Válido e Em Estoque",
+                    "available": True,
+                    "price_with_discount": 299.90,
+                },
+            },
+        ]
+    }
+
+    with patch("httpx.get", return_value=api_resp):
+        offers = search_kabum_offers("produto teste", limit=5)
+        assert len(offers) == 1
+        assert offers[0]["title"] == "Produto Válido e Em Estoque"
+        assert offers[0]["price"] == 299.90
+
+    # 2. Fallback HTML quando a API v2 falha
+    api_fail_resp = MagicMock()
+    api_fail_resp.status_code = 500
+
+    html_content = """
+    <html>
+      <body>
+        <article class="productCard">
+          <a href="/produto/555">Link</a>
+          <span class="nameCard">Item Sem Preço Esgotado</span>
+        </article>
+        <article class="productCard">
+          <a href="/produto/666">Link</a>
+          <span class="nameCard">Item Com Preço Ativo</span>
+          <span class="priceCard">R$ 159,90</span>
+        </article>
+      </body>
+    </html>
+    """
+    html_resp = MagicMock()
+    html_resp.status_code = 200
+    html_resp.text = html_content
+
+    def mock_get(url, **kwargs):
+        if "catalog/v2" in url:
+            return api_fail_resp
+        return html_resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        fallback_offers = search_kabum_offers("produto teste", limit=5)
+        assert len(fallback_offers) == 1
+        assert fallback_offers[0]["title"] == "Item Com Preço Ativo"
+        assert fallback_offers[0]["price"] == 159.90
+
+
+def test_search_amazon_offers_ignores_unavailable_without_price():
+    """Testa que search_amazon_offers descarta produtos sem preço (esgotados/indisponíveis)."""
+    html_content = """
+    <html>
+      <body>
+        <!-- Item 1: Esgotado (sem bloco de preço) -->
+        <div data-component-type="s-search-result" data-asin="B000000001">
+          <h2><span>Mouse Gamer Esgotado Indisponível</span></h2>
+        </div>
+        <!-- Item 2: Ativo com preço -->
+        <div data-component-type="s-search-result" data-asin="B000000002">
+          <h2><span>Mouse Gamer Em Estoque</span></h2>
+          <span class="a-price"><span class="a-offscreen">R$ 89,90</span></span>
+        </div>
+      </body>
+    </html>
+    """
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = html_content
+
+    with patch("httpx.get", return_value=mock_resp):
+        offers = search_amazon_offers("mouse gamer", limit=5)
+        assert len(offers) == 1
+        assert offers[0]["title"] == "Mouse Gamer Em Estoque"
+        assert offers[0]["price"] == 89.90
+        assert offers[0]["url"] == "https://www.amazon.com.br/dp/B000000002"
+
