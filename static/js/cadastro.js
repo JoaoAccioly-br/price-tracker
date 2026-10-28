@@ -93,6 +93,11 @@ function populateAICadastroSelect() {
   const sel = document.getElementById('ai-cadastro-product-select');
   if (!sel) return;
 
+  const queryInput = document.getElementById('ai-cadastro-query-input');
+  if (queryInput && (queryInput.value.toLowerCase() === 'undefined' || queryInput.value.toLowerCase() === 'null')) {
+    queryInput.value = '';
+  }
+
   if (!productsData.length) {
     sel.innerHTML = '<option value="">Nenhum produto cadastrado ainda</option>';
     return;
@@ -105,8 +110,7 @@ function populateAICadastroSelect() {
 
   if (selectedProductId) {
     const selProd = productsData.find(p => p.id === selectedProductId);
-    const queryInput = document.getElementById('ai-cadastro-query-input');
-    if (selProd && queryInput && !queryInput.value) {
+    if (selProd && queryInput && (!queryInput.value || queryInput.value.toLowerCase() === 'undefined')) {
       queryInput.value = selProd.name;
     }
   }
@@ -121,6 +125,8 @@ function handleAICadastroProductChange() {
   const p = productsData.find(item => item.id === pid);
   if (p) {
     queryInput.value = p.name;
+  } else {
+    queryInput.value = '';
   }
 }
 
@@ -161,6 +167,9 @@ async function handleCreateProductWithAI(e) {
   }
 
   const f = new FormData(form);
+  const prodName = nameInput.value.trim();
+  const prodCategory = (f.get('category') || 'Notebook').toString().trim() || 'Notebook';
+
   const aiBtn = e.currentTarget || e.target;
   const origHtml = aiBtn.innerHTML;
   aiBtn.disabled = true;
@@ -179,6 +188,9 @@ async function handleCreateProductWithAI(e) {
     populateCadastroSelect();
     populateAICadastroSelect();
 
+    const finalName = (res && res.name && res.name !== 'undefined') ? res.name : prodName;
+    const finalCategory = (res && res.category) ? res.category : prodCategory;
+
     // Rola até o card da IA e executa a busca
     const cardAI = document.getElementById('card-ai-discover');
     if (cardAI) {
@@ -188,12 +200,12 @@ async function handleCreateProductWithAI(e) {
     const aiSel = document.getElementById('ai-cadastro-product-select');
     const aiQuery = document.getElementById('ai-cadastro-query-input');
     if (aiSel) aiSel.value = res.id;
-    if (aiQuery) aiQuery.value = res.name;
+    if (aiQuery) aiQuery.value = finalName;
 
     await performAIDiscover({
       product_id: res.id,
-      product_name: res.name,
-      category: res.category,
+      product_name: finalName,
+      category: finalCategory,
     }, '#ai-cadastro-results-container', '#btn-ai-discover-submit');
   } catch (err) {
     alert('Erro ao cadastrar produto: ' + err.message);
@@ -234,7 +246,22 @@ async function handleAIDiscoverSubmit(e) {
   const storeSel = document.getElementById('ai-cadastro-store-select');
 
   const productId = sel && sel.value ? +sel.value : null;
-  const productName = queryInput ? queryInput.value.trim() : '';
+  let productName = queryInput ? queryInput.value.trim() : '';
+  if (productName.toLowerCase() === 'undefined' || productName.toLowerCase() === 'null') {
+    productName = '';
+    if (queryInput) queryInput.value = '';
+  }
+  let category = undefined;
+  if (productId) {
+    const p = productsData.find(item => item.id === productId);
+    if (p) {
+      if (!productName && p.name) {
+        productName = p.name;
+        if (queryInput) queryInput.value = p.name;
+      }
+      category = p.category || undefined;
+    }
+  }
   const store = storeSel ? storeSel.value.trim() || null : null;
 
   if (!productId && !productName) {
@@ -246,6 +273,7 @@ async function handleAIDiscoverSubmit(e) {
   await performAIDiscover({
     product_id: productId,
     product_name: productName || undefined,
+    category: category,
     store: store,
   }, '#ai-cadastro-results-container', '#btn-ai-discover-submit');
 }

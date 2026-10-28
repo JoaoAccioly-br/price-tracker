@@ -283,6 +283,9 @@ def test_search_mercadolivre_offers_catalog_and_fallback():
             }
             return resp
         elif "/sites/MLB/search" in req_url:
+            if "product_id=" in req_url or (kwargs.get("params") or {}).get("product_id"):
+                resp.status_code = 404
+                return resp
             resp.status_code = 200
             resp.json.return_value = {
                 "results": [
@@ -324,6 +327,9 @@ def test_search_mercadolivre_offers_enriches_via_winner_item_id():
             }
             return resp
         elif "/sites/MLB/search" in req_url:
+            if "product_id=" in req_url or (kwargs.get("params") or {}).get("product_id"):
+                resp.status_code = 404
+                return resp
             resp.status_code = 200
             resp.json.return_value = {"results": []}
             return resp
@@ -600,6 +606,9 @@ def test_search_mercadolivre_offers_filters_international_and_unpriced():
             }
             return resp
         elif "/sites/MLB/search" in req_url:
+            if "product_id=" in req_url or (kwargs.get("params") or {}).get("product_id"):
+                resp.status_code = 404
+                return resp
             resp.status_code = 200
             resp.json.return_value = {
                 "results": [
@@ -662,6 +671,144 @@ def test_parse_fallback_json_ld_preserves_available():
     assert res.price == 250.00
     assert res.available is True
     assert res.name == "Teclado Mecânico Gamer RGB"
+
+
+def test_search_mercadolivre_offers_enriches_via_catalog_items_endpoint():
+    """Testa enriquecimento de catálogo unpriced através de /products/{p_id}/items quando buy_box_winner e /items?ids falham."""
+    def mock_get(req_url, **kwargs):
+        resp = MagicMock()
+        if "/products/search" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "results": [
+                    {
+                        "id": "MLB990011",
+                        "name": "Notebook Dell Inspiron 15",
+                        "permalink": "https://www.mercadolivre.com.br/p/MLB990011",
+                        "buy_box_winner": None,
+                    }
+                ]
+            }
+            return resp
+        elif "/sites/MLB/search" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {"results": []}
+            return resp
+        elif "/products/MLB990011/items" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = [
+                {
+                    "item_id": "MLB556677",
+                    "title": "Notebook Dell Inspiron 15 i5 8GB",
+                    "price": 3299.00,
+                    "status": "active",
+                }
+            ]
+            return resp
+        elif "/products/MLB990011" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {"id": "MLB990011", "buy_box_winner": None}
+            return resp
+        resp.status_code = 404
+        return resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        results = mercadolivre.search_mercadolivre_offers("Notebook Dell", limit=3)
+        assert len(results) == 1
+        assert results[0]["title"] == "Notebook Dell Inspiron 15"
+        assert results[0]["price"] == 3299.00
+        assert results[0]["source"] == "ml:api-enriched"
+        assert "pdp_filters=item_id:MLB556677" in results[0]["url"]
+
+
+def test_search_mercadolivre_offers_enriches_via_sites_search_product_id():
+    """Testa enriquecimento de catálogo unpriced através de /sites/MLB/search?product_id={p_id} quando /products/{p_id}/items falha."""
+    def mock_get(req_url, **kwargs):
+        resp = MagicMock()
+        if "/products/search" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "results": [
+                    {
+                        "id": "MLB887766",
+                        "name": "Processador Ryzen 7",
+                        "permalink": "https://www.mercadolivre.com.br/p/MLB887766",
+                        "buy_box_winner": None,
+                    }
+                ]
+            }
+            return resp
+        elif "/products/MLB887766" in req_url:
+            resp.status_code = 404
+            return resp
+        elif "product_id=MLB887766" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {
+                "results": [
+                    {
+                        "id": "MLB112299",
+                        "title": "Ryzen 7 5700X Oferta Barata",
+                        "price": 1199.00,
+                    }
+                ]
+            }
+            return resp
+        elif "/sites/MLB/search" in req_url:
+            resp.status_code = 200
+            resp.json.return_value = {"results": []}
+            return resp
+        resp.status_code = 404
+        return resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        results = mercadolivre.search_mercadolivre_offers("Ryzen 7", limit=3)
+        assert len(results) == 1
+        assert results[0]["price"] == 1199.00
+        assert results[0]["source"] == "ml:api-enriched"
+        assert "pdp_filters=item_id:MLB112299" in results[0]["url"]
+
+
+def test_search_mercadolivre_offers_retry_simplified_query():
+    """Testa retry com query simplificada quando termos muito específicos (5+ palavras) retornam vazio na 1ª tentativa."""
+    def mock_get(req_url, **kwargs):
+        resp = MagicMock()
+        params = kwargs.get("params") or {}
+        # 1ª busca com a query longa completa -> vazio
+        if "/products/search" in req_url and params.get("q") == "lenovo ideapad slim 3 ryzen 7735":
+            resp.status_code = 200
+            resp.json.return_value = {"results": []}
+            return resp
+        elif "/sites/MLB/search" in req_url and params.get("q") == "lenovo ideapad slim 3 ryzen 7735":
+            resp.status_code = 200
+            resp.json.return_value = {"results": []}
+            return resp
+        # 2ª busca com a query simplificada (primeiras 4 palavras)
+        elif "/products/search" in req_url and params.get("q") == "lenovo ideapad slim 3":
+            resp.status_code = 200
+            resp.json.return_value = {
+                "results": [
+                    {
+                        "id": "MLB778899",
+                        "name": "Notebook Lenovo IdeaPad Slim 3",
+                        "permalink": "https://www.mercadolivre.com.br/p/MLB778899",
+                        "buy_box_winner": {
+                            "price": 2899.00,
+                            "status": "active",
+                        },
+                    }
+                ]
+            }
+            return resp
+        resp.status_code = 404
+        return resp
+
+    with patch("httpx.get", side_effect=mock_get):
+        results = mercadolivre.search_mercadolivre_offers("lenovo ideapad slim 3 ryzen 7735", limit=3)
+        assert len(results) == 1
+        assert results[0]["title"] == "Notebook Lenovo IdeaPad Slim 3"
+        assert results[0]["price"] == 2899.00
+        assert results[0]["source"] == "ml:api"
+
 
 
 

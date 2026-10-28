@@ -103,3 +103,32 @@ def test_domain_matching_prevents_subdomain_spoofing():
     assert _matches_domain("mercadolivre.com.br", "mercadolivre.com.br") is True
     assert _matches_domain("mercadolivre.com.br.evil.com", "mercadolivre.com.br") is False
     assert _matches_domain("evilmercadolivre.com.br", "mercadolivre.com.br") is False
+
+
+def test_create_product_returns_payload_and_ai_discover_sanitizes_undefined(client):
+    from unittest.mock import patch
+
+    # 1. POST /api/products retorna id, name, category e target_price
+    create_res = client.post(
+        "/api/products",
+        json={"name": "Dell XPS 13", "category": "Notebook", "target_price": 5500.0},
+    )
+    assert create_res.status_code == 201
+    prod_data = create_res.json()
+    assert "id" in prod_data and isinstance(prod_data["id"], int)
+    assert prod_data["name"] == "Dell XPS 13"
+    assert prod_data["category"] == "Notebook"
+    assert prod_data["target_price"] == 5500.0
+
+    pid = prod_data["id"]
+
+    # 2. POST /api/ai/discover-links com "undefined" ignora "undefined" e busca com o nome real
+    with patch("app.ai.discover_product_links", return_value=[{"title": "Dell XPS", "url": "https://loja.com/xps"}]) as mock_discover:
+        discover_res = client.post(
+            "/api/ai/discover-links",
+            json={"product_id": pid, "product_name": "undefined"},
+        )
+        assert discover_res.status_code == 200
+        mock_discover.assert_called_once()
+        assert mock_discover.call_args.kwargs["product_name"] == "Dell XPS 13"
+

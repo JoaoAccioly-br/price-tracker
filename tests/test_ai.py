@@ -963,3 +963,75 @@ def test_search_amazon_offers_ignores_unavailable_without_price():
         assert offers[0]["price"] == 89.90
         assert offers[0]["url"] == "https://www.amazon.com.br/dp/B000000002"
 
+
+def test_gemini_grounded_search_resolves_vertex_redirect(monkeypatch):
+    """Testa que _gemini_grounded_search resolve URLs com redirect do Vertex AI Grounding."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+
+    vertex_url = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/ABC123XYZ"
+    resolved_target = "https://www.mercadolivre.com.br/p/MLB99887766"
+
+    mock_gemini_resp = MagicMock()
+    mock_gemini_resp.status_code = 200
+    mock_gemini_resp.json.return_value = {
+        "candidates": [
+            {
+                "groundingMetadata": {
+                    "groundingChunks": [
+                        {
+                            "web": {
+                                "uri": vertex_url,
+                                "title": "Lenovo IdeaPad Slim 3",
+                            }
+                        }
+                    ]
+                },
+                "content": {
+                    "parts": [
+                        {
+                            "text": f"Encontrado no Mercado Livre: {resolved_target}"
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+
+    mock_redirect_resp = MagicMock()
+    mock_redirect_resp.status_code = 200
+    mock_redirect_resp.url = resolved_target
+
+    def mock_get(url, **kwargs):
+        if "vertexaisearch.cloud.google.com" in url:
+            return mock_redirect_resp
+        return MagicMock(status_code=404)
+
+    with patch("httpx.post", return_value=mock_gemini_resp), \
+         patch("httpx.get", side_effect=mock_get):
+        results = _gemini_grounded_search("Lenovo IdeaPad Slim 3", "Notebook")
+        assert len(results) == 1
+        assert results[0]["url"] == resolved_target
+        assert results[0]["store"] == "Mercado Livre"
+
+
+def test_discover_product_links_calls_grounding_when_clean_store_has_few_candidates(monkeypatch):
+    """Testa que discover_product_links chama Grounding quando target_store é informado e len(candidates) < 2."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+
+    single_ml = [
+        {"store": "Mercado Livre", "title": "Notebook Lenovo IdeaPad", "url": "https://mercadolivre.com.br/p/MLB1", "price": 2500.0, "source": "ml:api"}
+    ]
+    mock_grounded = [
+        {"store": "Mercado Livre", "title": "Notebook Lenovo IdeaPad Slim 3 Grounded", "url": "https://mercadolivre.com.br/p/MLB2", "price": 2400.0, "source": "gemini:grounded"}
+    ]
+
+    with patch("app.ai.search_mercadolivre_offers", return_value=single_ml), \
+         patch("app.ai._gemini_grounded_search", return_value=mock_grounded) as mock_ground:
+
+        disc = discover_product_links("Notebook Lenovo IdeaPad", target_store="Mercado Livre")
+        mock_ground.assert_called_once()
+        urls = [r["url"] for r in disc["results"]]
+        assert "https://mercadolivre.com.br/p/MLB1" in urls
+        assert "https://mercadolivre.com.br/p/MLB2" in urls
+
+

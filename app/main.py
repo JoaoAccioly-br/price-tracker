@@ -770,7 +770,12 @@ def create_product(body: ProductIn, user: dict | None = Depends(get_optional_or_
                 )
     finally:
         conn.close()
-    return {"id": cur.lastrowid}
+    return {
+        "id": cur.lastrowid,
+        "name": body.name.strip(),
+        "category": cat,
+        "target_price": body.target_price,
+    }
 
 
 @app.patch("/api/products/{product_id}")
@@ -1120,7 +1125,8 @@ def api_discover_links(
     body: AIDiscoverIn,
     user: dict | None = Depends(get_optional_or_current_user),
 ):
-    product_name = (body.product_name or "").strip()
+    raw_name = (body.product_name or "").strip()
+    product_name = "" if raw_name.lower() in ("undefined", "null") else raw_name
     category = (body.category or "Notebook").strip()
     exclude_urls: list[str] = []
 

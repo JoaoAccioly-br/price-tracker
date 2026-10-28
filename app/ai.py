@@ -230,7 +230,8 @@ def _gemini_grounded_search(
         f"Encontre links diretos de páginas de compra ativas e em estoque do produto '{product_name}' "
         f"(Categoria: {category}) {store_filter_hint}. "
         "Exija apenas páginas de produtos ativos e em estoque no Brasil (em Reais R$), descartando produtos esgotados, indisponíveis ou de sites internacionais. "
-        "Retorne links exatos e completos das páginas do produto (não use links de páginas de busca geral)."
+        "Retorne links exatos e completos das páginas do produto (não use links de páginas de busca geral). "
+        "Inclua obrigatoriamente as URLs completas (https://...) diretamente no texto da resposta, além dos chunks de grounding."
     )
 
     payload = {
@@ -260,6 +261,16 @@ def _gemini_grounded_search(
             uri = web.get("uri") or ""
             title = web.get("title") or product_name
             if uri.startswith(("http://", "https://")):
+                if "vertexaisearch.cloud.google.com/grounding-api-redirect/" in uri:
+                    try:
+                        r_red = _http_get(uri, timeout=4.0, follow_redirects=True)
+                        if r_red and r_red.url:
+                            resolved = str(r_red.url)
+                            if resolved.startswith(("http://", "https://")):
+                                uri = resolved
+                    except Exception as red_exc:
+                        log.debug("Erro ao resolver redirect de grounding '%s': %s", uri, red_exc)
+
                 clean_c = canonicalize_url(uri)
                 if clean_c not in seen_urls:
                     seen_urls.add(clean_c)
@@ -278,6 +289,16 @@ def _gemini_grounded_search(
             text = p.get("text", "")
             matches = re.findall(r"https?://[^\s)\]\"'>]+", text)
             for m_url in matches:
+                if "vertexaisearch.cloud.google.com/grounding-api-redirect/" in m_url:
+                    try:
+                        r_red = _http_get(m_url, timeout=4.0, follow_redirects=True)
+                        if r_red and r_red.url:
+                            resolved = str(r_red.url)
+                            if resolved.startswith(("http://", "https://")):
+                                m_url = resolved
+                    except Exception as red_exc:
+                        log.debug("Erro ao resolver redirect de texto '%s': %s", m_url, red_exc)
+
                 clean_c = canonicalize_url(m_url)
                 if clean_c not in seen_urls:
                     seen_urls.add(clean_c)
@@ -694,7 +715,7 @@ def discover_product_links(
     unique_stores = {c.get("store") for c in candidates if c.get("store")}
     should_call_grounding = False
     if api_key:
-        if clean_store and not candidates:
+        if clean_store and len(candidates) < 2:
             should_call_grounding = True
         elif not clean_store and len(unique_stores) < 3:
             should_call_grounding = True

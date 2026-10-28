@@ -672,6 +672,154 @@ def _is_valid_br_ml_item(item: dict, permalink: str) -> bool:
     return True
 
 
+def _enrich_unpriced_item(unp: dict, headers: dict) -> float | None:
+    """Tenta obter o preço de um item de catálogo unpriced através de múltiplos endpoints em cascata."""
+    enriched_price = None
+    p_id = unp.get("prod_id") or extract_mlb_id(unp.get("url", ""))
+    winner_id = unp.get("winner_item_id")
+
+    # 1. Consulta /products/{p_id} (buy_box_winner, pickers)
+    if p_id:
+        try:
+            p_resp = _http_get(f"https://api.mercadolibre.com/products/{p_id}", headers=headers, timeout=5)
+            if p_resp.status_code == 200:
+                p_data = p_resp.json()
+                bb = p_data.get("buy_box_winner")
+                if isinstance(bb, dict):
+                    p_winner = bb.get("item_id") or bb.get("id")
+                    if p_winner:
+                        winner_id = p_winner
+                        unp["winner_item_id"] = winner_id
+                        if "item_id" not in unp.get("url", ""):
+                            sep = "&" if "?" in unp["url"] else "?"
+                            unp["url"] = f"{unp['url']}{sep}pdp_filters=item_id:{winner_id}"
+                    if bb.get("price") is not None and _is_ml_offer_available(bb):
+                        enriched_price = parse_brl(bb.get("price"))
+                elif "pickers" in p_data and isinstance(p_data["pickers"], list):
+                    for picker in p_data["pickers"]:
+                        for prod in picker.get("products", []):
+                            prod_bb = prod.get("buy_box_winner")
+                            if isinstance(prod_bb, dict):
+                                prod_winner = prod_bb.get("item_id") or prod_bb.get("id")
+                                if prod_winner and not winner_id:
+                                    winner_id = prod_winner
+                                    unp["winner_item_id"] = winner_id
+                                    if "item_id" not in unp.get("url", ""):
+                                        sep = "&" if "?" in unp["url"] else "?"
+                                        unp["url"] = f"{unp['url']}{sep}pdp_filters=item_id:{winner_id}"
+                                if prod_bb.get("price") is not None and _is_ml_offer_available(prod_bb):
+                                    enriched_price = parse_brl(prod_bb.get("price"))
+                                    break
+                        if enriched_price is not None:
+                            break
+        except Exception as exc:
+            log.debug("Erro ao consultar /products/%s para enriquecimento: %s", p_id, exc)
+
+    # 2. Consulta /items?ids={winner_id}
+    if enriched_price is None and winner_id:
+        try:
+            w_resp = _http_get(
+                f"https://api.mercadolibre.com/items?ids={winner_id}",
+                headers=headers,
+                timeout=5,
+            )
+            if w_resp.status_code == 200:
+                w_json = w_resp.json()
+                if (
+                    isinstance(w_json, list)
+                    and w_json
+                    and w_json[0].get("code") == 200
+                ):
+                    w_body = w_json[0].get("body", {})
+                    if (
+                        w_body.get("price") is not None
+                        and _is_ml_offer_available(w_body)
+                        and _is_valid_br_ml_item(w_body, unp.get("url", ""))
+                    ):
+                        enriched_price = parse_brl(w_body["price"])
+                        if "item_id" not in unp.get("url", ""):
+                            sep = "&" if "?" in unp["url"] else "?"
+                            unp["url"] = f"{unp['url']}{sep}pdp_filters=item_id:{winner_id}"
+        except Exception as exc:
+            log.debug("Erro ao consultar /items?ids=%s para enriquecimento: %s", winner_id, exc)
+
+    # 3. Consulta /products/{p_id}/items (ofertas ativas do catálogo)
+    if enriched_price is None and p_id:
+        try:
+            it_resp = _http_get(
+                f"https://api.mercadolibre.com/products/{p_id}/items",
+                headers=headers,
+                timeout=5,
+            )
+            if it_resp.status_code == 200:
+                it_data = it_resp.json()
+                it_list = (
+                    it_data
+                    if isinstance(it_data, list)
+                    else (it_data.get("results", []) if isinstance(it_data, dict) else [])
+                )
+                for item in it_list:
+                    if (
+                        item.get("price") is not None
+                        and _is_ml_offer_available(item)
+                        and _is_valid_br_ml_item(item, unp.get("url", ""))
+                    ):
+                        enriched_price = parse_brl(item["price"])
+                        item_id = item.get("item_id") or item.get("id")
+                        if item_id:
+                            unp["winner_item_id"] = item_id
+                            if "item_id" not in unp.get("url", ""):
+                                sep = "&" if "?" in unp["url"] else "?"
+                                unp["url"] = f"{unp['url']}{sep}pdp_filters=item_id:{item_id}"
+                        break
+        except Exception as exc:
+            log.debug("Erro ao consultar /products/%s/items para enriquecimento: %s", p_id, exc)
+
+    # 4. Consulta /sites/MLB/search?product_id={p_id}&limit=5
+    if enriched_price is None and p_id:
+        try:
+            s_resp = _http_get(
+                f"https://api.mercadolibre.com/sites/MLB/search?product_id={p_id}&limit=5",
+                headers=headers,
+                timeout=5,
+            )
+            if s_resp.status_code == 200:
+                s_data = s_resp.json()
+                active_items = []
+                for sit in s_data.get("results", []):
+                    sp = sit.get("price")
+                    if (
+                        sp is not None
+                        and _is_ml_offer_available(sit)
+                        and _is_valid_br_ml_item(sit, sit.get("permalink") or unp.get("url", ""))
+                    ):
+                        p_val = parse_brl(sp)
+                        if p_val is not None:
+                            active_items.append((p_val, sit.get("id") or sit.get("item_id")))
+                if active_items:
+                    active_items.sort(key=lambda x: x[0])
+                    enriched_price = active_items[0][0]
+                    best_id = active_items[0][1]
+                    if best_id:
+                        unp["winner_item_id"] = best_id
+                        if "item_id" not in unp.get("url", ""):
+                            sep = "&" if "?" in unp["url"] else "?"
+                            unp["url"] = f"{unp['url']}{sep}pdp_filters=item_id:{best_id}"
+        except Exception as exc:
+            log.debug("Erro ao consultar /sites/MLB/search?product_id=%s para enriquecimento: %s", p_id, exc)
+
+    # 5. Fallback HTML da página de catálogo
+    if enriched_price is None and unp.get("url"):
+        try:
+            h_res = _fetch_catalog_html_price(unp["url"])
+            if h_res and h_res.price is not None and h_res.available:
+                enriched_price = h_res.price
+        except Exception as exc:
+            log.debug("Erro no fallback HTML de enriquecimento para %s: %s", unp["url"], exc)
+
+    return enriched_price
+
+
 def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
     """Busca ofertas no Mercado Livre via API oficial (catálogo /products/search com fallback para /sites/MLB/search)."""
     if not keyword or not keyword.strip():
@@ -775,57 +923,7 @@ def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
         remaining_unpriced: list[dict] = []
         for idx, unp in enumerate(unpriced_results):
             if idx < to_enrich_count:
-                enriched_price = None
-                p_id = unp.get("prod_id") or extract_mlb_id(unp["url"])
-                if p_id:
-                    try:
-                        p_resp = _http_get(f"https://api.mercadolibre.com/products/{p_id}", headers=headers, timeout=5)
-                        if p_resp.status_code == 200:
-                            p_data = p_resp.json()
-                            bb = p_data.get("buy_box_winner")
-                            if isinstance(bb, dict) and bb.get("price") is not None and _is_ml_offer_available(bb):
-                                enriched_price = parse_brl(bb.get("price"))
-                            elif "pickers" in p_data and isinstance(p_data["pickers"], list):
-                                for picker in p_data["pickers"]:
-                                    for prod in picker.get("products", []):
-                                        prod_bb = prod.get("buy_box_winner")
-                                        if isinstance(prod_bb, dict) and prod_bb.get("price") is not None and _is_ml_offer_available(prod_bb):
-                                            enriched_price = parse_brl(prod_bb.get("price"))
-                                            break
-                                    if enriched_price is not None:
-                                        break
-                    except Exception as exc:
-                        log.debug("Erro ao consultar /products/%s para enriquecimento: %s", p_id, exc)
-
-                winner_id = unp.get("winner_item_id")
-                if enriched_price is None and winner_id:
-                    try:
-                        w_resp = _http_get(
-                            f"https://api.mercadolibre.com/items?ids={winner_id}",
-                            headers=headers,
-                            timeout=5,
-                        )
-                        if w_resp.status_code == 200:
-                            w_json = w_resp.json()
-                            if (
-                                isinstance(w_json, list)
-                                and w_json
-                                and w_json[0].get("code") == 200
-                            ):
-                                w_body = w_json[0].get("body", {})
-                                if w_body.get("price") is not None and _is_ml_offer_available(w_body):
-                                    enriched_price = parse_brl(w_body["price"])
-                    except Exception as exc:
-                        log.debug("Erro ao consultar /items?ids=%s para enriquecimento: %s", winner_id, exc)
-
-                if enriched_price is None:
-                    try:
-                        h_res = _fetch_catalog_html_price(unp["url"])
-                        if h_res and h_res.price is not None and h_res.available:
-                            enriched_price = h_res.price
-                    except Exception as exc:
-                        log.debug("Erro no fallback HTML de enriquecimento para %s: %s", unp["url"], exc)
-
+                enriched_price = _enrich_unpriced_item(unp, headers)
                 if enriched_price is not None:
                     unp["price"] = enriched_price
                     unp["source"] = "ml:api-enriched"
@@ -837,15 +935,92 @@ def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
                 remaining_unpriced.append(unp)
         unpriced_results = remaining_unpriced
 
+    # 2.6 Retry com query simplificada quando termos muito específicos não retornam resultados
+    words = keyword.strip().split()
+    if not priced_results and len(words) >= 4:
+        if len(words) > 4:
+            simplified_kw = " ".join(words[:4])
+        else:
+            simplified_kw = " ".join(words[:3])
+
+        if simplified_kw and simplified_kw.lower() != keyword.strip().lower():
+            log.info(
+                "Nenhum resultado para query '%s'. Tentando retry simplificado com '%s'",
+                keyword.strip(),
+                simplified_kw,
+            )
+            retry_unpriced: list[dict] = []
+            try:
+                url_products = "https://api.mercadolibre.com/products/search"
+                params_products = {
+                    "status": "active",
+                    "site_id": "MLB",
+                    "q": simplified_kw,
+                    "limit": limit,
+                }
+                resp = _http_get(url_products, params=params_products, headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for item in data.get("results", []):
+                        prod_id = item.get("id")
+                        name = item.get("name")
+                        permalink = item.get("permalink") or (
+                            f"https://www.mercadolivre.com.br/p/{prod_id}" if prod_id else ""
+                        )
+                        if not permalink or not name:
+                            continue
+                        if not _is_valid_br_ml_item(item, permalink):
+                            continue
+                        price = None
+                        winner_item_id = None
+                        bb = item.get("buy_box_winner")
+                        if isinstance(bb, dict):
+                            winner_item_id = bb.get("item_id") or bb.get("id")
+                            if winner_item_id and "item_id" not in permalink:
+                                sep = "&" if "?" in permalink else "?"
+                                permalink = f"{permalink}{sep}pdp_filters=item_id:{winner_item_id}"
+                            if bb.get("price") is not None:
+                                price = parse_brl(bb.get("price"))
+                        elif bb and hasattr(bb, "get") and bb.get("price") is not None:
+                            price = parse_brl(bb.get("price"))
+
+                        entry = {
+                            "store": "Mercado Livre",
+                            "title": name.strip(),
+                            "url": permalink.strip(),
+                            "price": price,
+                            "source": "ml:api",
+                            "prod_id": prod_id,
+                        }
+                        if winner_item_id:
+                            entry["winner_item_id"] = winner_item_id
+
+                        if price is not None:
+                            priced_results.append(entry)
+                        else:
+                            retry_unpriced.append(entry)
+            except Exception as exc:
+                log.warning("Erro no retry simplificado de /products/search para '%s': %s", simplified_kw, exc)
+
+            if retry_unpriced and len(priced_results) < limit:
+                to_enrich_retry = min(limit - len(priced_results), len(retry_unpriced))
+                for idx, unp in enumerate(retry_unpriced):
+                    if idx < to_enrich_retry:
+                        enriched_price = _enrich_unpriced_item(unp, headers)
+                        if enriched_price is not None:
+                            unp["price"] = enriched_price
+                            unp["source"] = "ml:api-enriched"
+                            if not any(r["url"] == unp["url"] for r in priced_results):
+                                priced_results.append(unp)
+
     # 3. Fallback: Se não obteve nenhum item com preço, busca no portal público lista.mercadolivre.com.br
     if not priced_results:
         skip_pub = "PYTEST_CURRENT_TEST" in os.environ and getattr(httpx.get, "__module__", "") == "httpx"
         if not skip_pub:
             try:
-                import urllib.parse
                 from .base import HEADERS as DESKTOP_HEADERS
 
-                slug = urllib.parse.quote_plus(keyword.strip())
+                slug = re.sub(r"[^a-zA-Z0-9]+", "-", keyword.strip().lower()).strip("-")
                 pub_url = f"https://lista.mercadolivre.com.br/{slug}"
                 r_pub = _http_get(pub_url, headers=DESKTOP_HEADERS, timeout=6, follow_redirects=True)
                 if r_pub.status_code == 200 and getattr(r_pub, "text", None):
@@ -859,9 +1034,36 @@ def search_mercadolivre_offers(keyword: str, limit: int = 5) -> list[dict]:
                         if not title_el or not link_el or not link_el.get("href"):
                             continue
                         title = title_el.get_text(strip=True)
-                        href = link_el["href"].split("?")[0].strip()
-                        if not href.startswith("http"):
+                        raw_href = link_el["href"].strip()
+                        if not raw_href.startswith("http"):
                             continue
+
+                        # Filtra links de rastreamento de anúncios que não apontam para página de produto
+                        parsed_h = urlparse(raw_href)
+                        h_host = (parsed_h.hostname or "").lower()
+                        if "click1.mercadolivre.com.br" in h_host or "mclics" in raw_href:
+                            m = re.search(
+                                r"(https?://(?:www\.|produto\.)?mercadolivre\.com\.br/(?:p/MLB|MLB-|\w+/[^&]+MLB)[^&\"'>\s]*)",
+                                raw_href,
+                            )
+                            if m:
+                                raw_href = m.group(1)
+                                parsed_h = urlparse(raw_href)
+                                h_host = (parsed_h.hostname or "").lower()
+                            else:
+                                continue
+
+                        if not (
+                            h_host == "mercadolivre.com.br"
+                            or h_host == "produto.mercadolivre.com.br"
+                            or h_host.endswith(".mercadolivre.com.br")
+                        ):
+                            continue
+                        if "click1" in h_host or "mclics" in raw_href:
+                            continue
+
+                        href = raw_href.split("?")[0].strip()
+
                         price_el = card.select_one(".andes-money-amount__fraction")
                         if not price_el:
                             continue
