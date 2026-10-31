@@ -1,6 +1,6 @@
 # Dependências de produção (versões fixadas = builds reprodutíveis e sem surpresas).
 # Atualizadas automaticamente via Dependabot (.github/dependabot.yml).
-fastapi==0.143.0
+fastapi==0.162.0
 uvicorn[standard]==0.54.0
 httpx==0.28.1
 beautifulsoup4==4.15.0
